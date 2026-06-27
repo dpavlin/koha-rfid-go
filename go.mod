@@ -1,5 +1,7 @@
 module koha-rfid
 
-go 1.21
+go 1.25.0
 
-require github.com/tarm/serial v0.0.0-20180812221700-3b7f8c8d1c2a
+require go.bug.st/serial v1.7.1
+
+require golang.org/x/sys v0.43.0 // indirect

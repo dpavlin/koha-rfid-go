@@ -8,16 +8,16 @@ import (
 	"strings"
 	"time"
 
-	"github.com/tarm/serial"
+	"go.bug.st/serial"
 )
 
 // 3M 810 RFID Reader Protocol Implementation
 // Based on reverse engineering in Biblio::RFID::Reader::3M810
 
 const (
-	ReaderBaud    = 19200
-	FramePrefix   = 0xD6
-	ProbePrefix   = 0xD5
+	ReaderBaud  = 19200
+	FramePrefix = 0xD6
+	ProbePrefix = 0xD5
 )
 
 var crcTable [256]uint16
@@ -49,24 +49,22 @@ func crc16(data []byte) uint16 {
 
 // RfidReader wraps serial port communication with 3M 810 reader
 type RfidReader struct {
-	port *serial.Port
+	port  serial.Port
 	debug bool
 }
 
 func NewRfidReader(comPort string, debug bool) (*RfidReader, error) {
-	cfg := &serial.Config{
-		Name:        comPort,
-		Baud:        ReaderBaud,
-		DataBits:    8,
-		Parity:      serial.ParityNone,
-		StopBits:    1,
-		HandleState: serial.HandshakeNone,
+	mode := &serial.Mode{
+		BaudRate: ReaderBaud,
+		DataBits: 8,
+		Parity:   serial.NoParity,
+		StopBits: serial.OneStopBit,
 	}
-	port, err := serial.OpenPort(cfg)
+	port, err := serial.Open(comPort, mode)
 	if err != nil {
 		return nil, fmt.Errorf("open serial port: %w", err)
 	}
-	port.ReadTimeout() // set by serial library; we use custom timeouts below
+	port.SetReadTimeout(100 * time.Millisecond)
 
 	r := &RfidReader{port: port, debug: debug}
 
@@ -121,46 +119,34 @@ func (r *RfidReader) sendFrame(hexCmd string) error {
 // readResponse reads a response from the reader.
 // Returns the payload (after length byte and CRC checked).
 func (r *RfidReader) readResponse() ([]byte, error) {
-	// Read 3 bytes: D6 prefix, 2-byte length (big-endian)
+	// Read header bytes
 	header := make([]byte, 3)
-	n, err := r.port.Read(header)
-	if err != nil {
-		return nil, fmt.Errorf("read header: %w", err)
-	}
-	if n < 3 {
-		// Wait for more bytes
-		for len(header) < 3 {
-			var b [1]byte
-			_, err = r.port.Read(b[:])
-			if err != nil {
-				return nil, fmt.Errorf("read header byte: %w", err)
-			}
-			header = append(header, b[0])
+	// Read until we have at least 3 bytes
+	pos := 0
+	for pos < 3 {
+		n, err := r.port.Read(header[pos:])
+		if err != nil {
+			return nil, fmt.Errorf("read header: %w", err)
 		}
+		pos += n
 	}
 
 	if header[0] != FramePrefix && header[0] != ProbePrefix {
 		return nil, fmt.Errorf("unexpected prefix: %02x", header[0])
 	}
 
-	payloadLen := int(header[2]) // For D5/D6 format, the 3rd byte is the length of remaining data
-	// Actually for D5: D5 00 <len> <data...> <crc16> — the len is the 3rd byte (1 byte)
-	// For D6: D6 <len2 big-endian> <data...> <crc16>
-	// Let's handle both.
-
 	var payload []byte
 	if header[0] == ProbePrefix {
 		// D5 format: D5 00 <len1> <data...> <crc16>
-		payloadLen = int(header[2])
+		payloadLen := int(header[2])
 		payload = make([]byte, payloadLen)
-		n, err = r.port.Read(payload)
-		if err != nil || n < payloadLen {
-			// read more
-			read := n
-			for read < payloadLen {
-				m, _ := r.port.Read(payload[read:])
-				read += m
+		pos := 0
+		for pos < payloadLen {
+			n, err := r.port.Read(payload[pos:])
+			if err != nil {
+				return nil, fmt.Errorf("read payload: %w", err)
 			}
+			pos += n
 		}
 		// CRC is the last 2 bytes; strip it
 		if len(payload) >= 2 {
@@ -168,19 +154,18 @@ func (r *RfidReader) readResponse() ([]byte, error) {
 		}
 	} else {
 		// D6 format: D6 <len2 big-endian> <data...> <crc16>
-		// header has D6 + first byte of len; need second byte
 		lenBytes := make([]byte, 2)
 		lenBytes[0] = header[1]
 		lenBytes[1] = header[2]
-		payloadLen = int(binary.BigEndian.Uint16(lenBytes)) - 2 // minus CRC
+		payloadLen := int(binary.BigEndian.Uint16(lenBytes)) - 2 // minus CRC
 		payload = make([]byte, payloadLen)
-		n, err = r.port.Read(payload)
-		if err != nil || n < payloadLen {
-			read := n
-			for read < payloadLen {
-				m, _ := r.port.Read(payload[read:])
-				read += m
+		pos := 0
+		for pos < payloadLen {
+			n, err := r.port.Read(payload[pos:])
+			if err != nil {
+				return nil, fmt.Errorf("read payload: %w", err)
 			}
+			pos += n
 		}
 	}
 
@@ -205,8 +190,8 @@ func (r *RfidReader) Probe() (string, error) {
 		return "", fmt.Errorf("short probe response: %x", resp)
 	}
 	// Verify response prefix
-	expected, _ := hex.DecodeString("040011")
-	if !bytes.Equal(resp[:3], expected) {
+	expectedPrefix := []byte{0x04, 0x00, 0x11}
+	if len(resp) < 3 || resp[0] != expectedPrefix[0] || resp[1] != expectedPrefix[1] || resp[2] != expectedPrefix[2] {
 		return "", fmt.Errorf("unexpected probe response: %x", resp)
 	}
 	hwVer := resp[3:7]
@@ -224,7 +209,7 @@ func (r *RfidReader) Inventory() ([]string, error) {
 		return nil, err
 	}
 	// Expected: FE 00 00 05 <nr_tags_1> <tag1_8bytes> <tag2_8bytes> ...
-	if len(resp) < 4 {
+	if len(resp) < 5 {
 		return nil, fmt.Errorf("short inventory response: %x", resp)
 	}
 	if resp[0] != 0xFE || resp[1] != 0x00 || resp[2] != 0x00 || resp[3] != 0x05 {
@@ -251,7 +236,6 @@ func (r *RfidReader) ReadBlocks(tag string, start, count int) (map[int]string, e
 	if len(tag) != 16 {
 		return nil, fmt.Errorf("tag must be 16 hex chars (8 bytes)")
 	}
-	tagBytes, _ := hex.DecodeString(tag)
 	cmdHex := fmt.Sprintf("02 %s %02x %02x", tag, start, count)
 	err := r.sendFrame(cmdHex)
 	if err != nil {
@@ -262,7 +246,7 @@ func (r *RfidReader) ReadBlocks(tag string, start, count int) (map[int]string, e
 		return nil, err
 	}
 	// Response: 02 00 <tag8> <nr_blocks_1> <block_data...>
-	if len(resp) < 10 {
+	if len(resp) < 11 {
 		return nil, fmt.Errorf("short read response: %x", resp)
 	}
 	if resp[0] != 0x02 || resp[1] != 0x00 {
@@ -331,7 +315,7 @@ func (r *RfidReader) ReadAfi(tag string) (byte, error) {
 	if err != nil {
 		return 0, err
 	}
-	if len(resp) < 10 || resp[0] != 0x0A || resp[1] != 0x00 {
+	if len(resp) < 11 || resp[0] != 0x0A || resp[1] != 0x00 {
 		return 0, fmt.Errorf("read AFI failed: %x", resp)
 	}
 	afi := resp[10]
@@ -370,6 +354,6 @@ func (r *RfidReader) WriteAfi(tag string, afi byte) error {
 
 // AFI constants for library items
 const (
-	AfiSecure   = 0xDA // checked in (secure)
-	AfiUnsecure = 0xD7 // checked out (unsecure)
+	AfiSecure   byte = 0xDA // checked in (secure)
+	AfiUnsecure byte = 0xD7 // checked out (unsecure)
 )
