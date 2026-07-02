@@ -1,4 +1,4 @@
-package main
+package rfid
 
 import (
 	"encoding/binary"
@@ -118,11 +118,6 @@ func (r *RfidReader) sendFrame(hexCmd string) error {
 }
 
 // readResponse reads a framed response from the reader.
-// Returns the payload (without CRC). The response uses the same prefix as
-// the command (FE, 02, 04, 09, 0A) or D5/D6 framing.
-// The 3-byte header is: <prefix> <len_high> <len_low> (big-endian 16-bit length
-// which includes CRC). Perl code uses byte 2 as single-byte length since
-// high byte is always 0 for small responses.
 func (r *RfidReader) readResponse() ([]byte, error) {
 	// Read header: 3 bytes (prefix + 2-byte big-endian length)
 	header := make([]byte, 3)
@@ -135,11 +130,11 @@ func (r *RfidReader) readResponse() ([]byte, error) {
 		pos += n
 	}
 
-	// Accept any prefix byte (FE, 02, 04, 09, 0A, D5, D6)
+	// Accept any prefix byte
 	prefix := header[0]
+	_ = prefix
 
-	// Length is 2-byte big-endian value; byte 2 (low byte) is sufficient
-	// for small payloads (< 256 bytes)
+	// Length is 2-byte big-endian value
 	payloadLen := int(binary.BigEndian.Uint16(header[1:3]))
 
 	if payloadLen < 2 {
@@ -157,9 +152,8 @@ func (r *RfidReader) readResponse() ([]byte, error) {
 		pos += n
 	}
 
-	// Verify CRC: computed over header bytes 1-2 + payload without last 2 bytes
-	// (matches Perl: checksum(substr($r_len,1).substr($data,0,-2)))
-	crcHeader := header[1:3] // 2-byte length
+	// Verify CRC
+	crcHeader := header[1:3]
 	crcPayload := payload[:payloadLen-2]
 	crcInput := append(crcHeader, crcPayload...)
 	expectedCRC := binary.BigEndian.Uint16(payload[payloadLen-2 : payloadLen])
@@ -168,19 +162,16 @@ func (r *RfidReader) readResponse() ([]byte, error) {
 		if r.debug {
 			log.Printf("CRC mismatch: computed %04x != expected %04x (prefix %02x)", computedCRC, expectedCRC, prefix)
 		}
-		// Non-fatal: continue like Perl which only warns on mismatch
 	}
 
 	if r.debug {
 		log.Printf("<< %02x %02x %02x %x", prefix, header[1], header[2], payload[:payloadLen-2])
 	}
 
-	// Return payload without CRC
 	return payload[:payloadLen-2], nil
 }
 
 // Probe sends the hardware version probe command.
-// Matches Perl init(): sends D5 00 05 04 00 11 8C66 and reads 12-byte response.
 func (r *RfidReader) Probe() (string, error) {
 	err := r.sendFrame("D5 00 05 04 00 11 8C66")
 	if err != nil {
@@ -190,8 +181,6 @@ func (r *RfidReader) Probe() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	// Expected response (after D5 header+CRC):
-	// 04 00 11 <hw_ver_4_bytes>
 	if len(resp) < 7 {
 		return "", fmt.Errorf("short probe response: %x", resp)
 	}
@@ -203,7 +192,6 @@ func (r *RfidReader) Probe() (string, error) {
 }
 
 // Inventory scans for all tags in reader range.
-// Matches Perl inventory(): sends FE 00 05, parses FE 00 00 05 <nr_tags> <tag_data>.
 func (r *RfidReader) Inventory() ([]string, error) {
 	err := r.sendFrame("FE 00 05")
 	if err != nil {
@@ -236,8 +224,6 @@ func (r *RfidReader) Inventory() ([]string, error) {
 }
 
 // ReadBlocks reads blocks from a tag.
-// Matches Perl read_blocks(): sends 02 <tag> <start> <blocks>, parses 02 00 <tag8> <nr_blocks> <block_data>.
-// Each block entry: 2-byte block number (little-endian) + 4-byte payload.
 func (r *RfidReader) ReadBlocks(tag string, start, count int) (map[int]string, error) {
 	if len(tag) != 16 {
 		return nil, fmt.Errorf("tag must be 16 hex chars")
@@ -251,14 +237,9 @@ func (r *RfidReader) ReadBlocks(tag string, start, count int) (map[int]string, e
 	if err != nil {
 		return nil, err
 	}
-	// Response: 02 00 <tag8> <nr_blocks> <block_data...>
-	if len(resp) < 11 {
-		return nil, fmt.Errorf("short read response: %x", resp)
+	if len(resp) < 11 || resp[0] != 0x02 || resp[1] != 0x00 {
+		return nil, fmt.Errorf("unexpected read response: %x", resp)
 	}
-	if resp[0] != 0x02 || resp[1] != 0x00 {
-		return nil, fmt.Errorf("unexpected read header: %x", resp[:2])
-	}
-	// Tag is bytes 2-9, block count is byte 10
 	nrBlocks := int(resp[10])
 	if nrBlocks == 0 {
 		return nil, nil
@@ -278,8 +259,6 @@ func (r *RfidReader) ReadBlocks(tag string, start, count int) (map[int]string, e
 }
 
 // WriteBlocks writes data to a tag with verification (read-back + retry).
-// Matches Perl write_blocks(): sends 04 <tag> 00 <nr_blocks> 00 <hex_data>,
-// parses 04 00 <tag> <blocks>, then verifies by reading back (up to 10 retries).
 func (r *RfidReader) WriteBlocks(tag string, data string) error {
 	if len(tag) != 16 {
 		return fmt.Errorf("tag must be 16 hex chars")
@@ -347,7 +326,6 @@ func (r *RfidReader) WriteBlocks(tag string, data string) error {
 }
 
 // ReadAfi reads the AFI byte from a tag.
-// Matches Perl read_afi(): sends 0A <tag>, parses 0A 00 <tag8> <afi1>.
 func (r *RfidReader) ReadAfi(tag string) (byte, error) {
 	if len(tag) != 16 {
 		return 0, fmt.Errorf("tag must be 16 hex chars")
@@ -369,8 +347,6 @@ func (r *RfidReader) ReadAfi(tag string) (byte, error) {
 }
 
 // WriteAfi writes an AFI byte to a tag with retry loop.
-// Matches Perl write_afi(): sends 09 <tag> <afi>, expects 09 00 for success,
-// retries on 09 06 error (up to 100 times like Perl).
 func (r *RfidReader) WriteAfi(tag string, afi byte) error {
 	if len(tag) != 16 {
 		return fmt.Errorf("tag must be 16 hex chars")
@@ -389,7 +365,6 @@ func (r *RfidReader) WriteAfi(tag string, afi byte) error {
 		if len(resp) >= 2 && resp[0] == 0x09 && resp[1] == 0x00 {
 			return nil
 		}
-		// Error 09 06 → retry (matches Perl)
 		if len(resp) >= 2 && resp[0] == 0x09 && resp[1] == 0x06 {
 			time.Sleep(50 * time.Millisecond)
 			continue

@@ -10,6 +10,8 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"koha-rfid/internal/rfid"
 )
 
 func main() {
@@ -21,32 +23,32 @@ func main() {
 
 	// Open RFID reader
 	log.Printf("Opening RFID reader on %s ...", *comPort)
-	rfid, err := NewRfidReader(*comPort, *debug)
+	reader, err := rfid.NewRfidReader(*comPort, *debug)
 	if err != nil {
 		log.Fatalf("RFID reader: %v", err)
 	}
-	defer rfid.Close()
+	defer reader.Close()
 
 	// Probe reader
-	hwVer, err := rfid.Probe()
+	hwVer, err := reader.Probe()
 	if err != nil {
 		log.Fatalf("RFID probe failed: %v", err)
 	}
 	log.Printf("3M 810 hardware version: %s", hwVer)
 
 	if *onlyScan {
-		tags, err := rfid.Inventory()
+		tags, err := reader.Inventory()
 		if err != nil {
 			log.Fatalf("Inventory scan failed: %v", err)
 		}
 		fmt.Printf("Tags in range: %d\n", len(tags))
 		for _, t := range tags {
 			fmt.Printf("  Tag: %s\n", t)
-			afi, err := rfid.ReadAfi(t)
+			afi, err := reader.ReadAfi(t)
 			if err == nil {
 				fmt.Printf("    AFI: %02x\n", afi)
 			}
-			blocks, err := rfid.ReadBlocks(t, 0, 8)
+			blocks, err := reader.ReadBlocks(t, 0, 8)
 			if err == nil {
 				for bn, bp := range blocks {
 					fmt.Printf("    Block %d: %s\n", bn, bp)
@@ -56,8 +58,8 @@ func main() {
 		return
 	}
 
-	// Start HTTP server with only the RFID reader – no Koha API needed
-	server := NewHttpServer(*listen, rfid, *debug)
+	// Start HTTP server
+	server := NewHttpServer(*listen, reader, *debug)
 	go func() {
 		log.Printf("Starting HTTP server on %s", *listen)
 		if err := server.Run(); err != nil {
@@ -68,7 +70,7 @@ func main() {
 	// Background scan loop that updates the tag cache
 	go func() {
 		for {
-			tags, err := rfid.Inventory()
+			tags, err := reader.Inventory()
 			if err != nil {
 				log.Printf("Scan error: %v", err)
 				time.Sleep(2 * time.Second)
@@ -81,15 +83,26 @@ func main() {
 					TagType: "RFID501",
 					Reader:  "3M810",
 				}
-				afi, err := rfid.ReadAfi(tag)
+				afi, err := reader.ReadAfi(tag)
 				if err == nil {
 					info.Security = strings.ToUpper(hex.EncodeToString([]byte{afi}))
 				}
-				blocks, err := rfid.ReadBlocks(tag, 0, 8)
+				blocks, err := reader.ReadBlocks(tag, 0, 8)
 				if err == nil {
-					if b0, ok := blocks[0]; ok {
-						barcodeBytes, _ := hex.DecodeString(b0)
-						info.Content = string(barcodeBytes)
+					blockHexes := make([]string, len(blocks))
+					for i := 0; i < len(blocks); i++ {
+						if b, ok := blocks[i]; ok {
+							blockHexes[i] = b
+						}
+					}
+					decoded := rfid.DecodeRFID501(blockHexes)
+					if decoded != nil {
+						info.Content = decoded.Content
+					} else {
+						if b0, ok := blocks[0]; ok {
+							barcodeBytes, _ := hex.DecodeString(b0)
+							info.Content = string(barcodeBytes)
+						}
 					}
 				}
 				server.tagCache[info.SID] = info

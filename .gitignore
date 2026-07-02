@@ -1,0 +1,15 @@
+# Build artifacts (root binaries from old flat layout)
+koha-rfid
+koha-rfid.exe
+scan
+scan.exe
+program
+program.exe
+*.exe
+
+# Build output directory (produced by build.sh)
+build/
+
+# OS temp files
+*~
+*.swp

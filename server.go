@@ -8,16 +8,14 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"koha-rfid/internal/rfid"
 )
 
 // HttpServer provides the local JSONP API for the Koha JavaScript integration.
-// It replicates the API from scripts/RFID-JSONP-server.pl but only the parts
-// needed by the browser userscript – no Koha REST/SIP2 calls.
-// The JavaScript (koha-rfid.js) handles form fill and submission on Koha pages.
-
 type HttpServer struct {
 	listen   string
-	rfid     *RfidReader
+	rfid     *rfid.RfidReader
 	debug    bool
 	tagCache map[string]*TagInfo
 }
@@ -30,10 +28,10 @@ type TagInfo struct {
 	Reader   string `json:"reader"`
 }
 
-func NewHttpServer(listen string, rfid *RfidReader, debug bool) *HttpServer {
+func NewHttpServer(listen string, reader *rfid.RfidReader, debug bool) *HttpServer {
 	return &HttpServer{
 		listen:   listen,
-		rfid:     rfid,
+		rfid:     reader,
 		debug:    debug,
 		tagCache: make(map[string]*TagInfo),
 	}
@@ -70,7 +68,6 @@ func (s *HttpServer) handleIndex(w http.ResponseWriter, r *http.Request) {
 func (s *HttpServer) handleScan(w http.ResponseWriter, r *http.Request) {
 	callback := r.FormValue("callback")
 
-	// Perform inventory scan
 	tags, err := s.rfid.Inventory()
 	if err != nil {
 		http.Error(w, fmt.Sprintf("RFID error: %v", err), 500)
@@ -95,12 +92,25 @@ func (s *HttpServer) handleScan(w http.ResponseWriter, r *http.Request) {
 			info.Security = strings.ToUpper(hex.EncodeToString([]byte{afi}))
 		}
 
-		// Read block 0 (first 4 bytes = barcode)
+		// Read blocks and decode RFID501
 		blocks, err := s.rfid.ReadBlocks(tag, 0, 8)
 		if err == nil && len(blocks) > 0 {
-			if b0, ok := blocks[0]; ok {
-				barcodeBytes, _ := hex.DecodeString(b0)
-				info.Content = string(barcodeBytes)
+			blockHexes := make([]string, len(blocks))
+			for i := 0; i < len(blocks); i++ {
+				if b, ok := blocks[i]; ok {
+					blockHexes[i] = b
+				}
+			}
+			decoded := rfid.DecodeRFID501(blockHexes)
+			if decoded != nil {
+				info.Content = decoded.Content
+				info.TagType = "RFID501"
+			} else {
+				// Fallback: read block 0 as raw barcode
+				if b0, ok := blocks[0]; ok {
+					barcodeBytes, _ := hex.DecodeString(b0)
+					info.Content = string(barcodeBytes)
+				}
 			}
 		}
 
@@ -130,8 +140,6 @@ func (s *HttpServer) handleScan(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *HttpServer) handleSecure(w http.ResponseWriter, r *http.Request) {
-	// Set AFI for a tag. Called as /secure?<tag>=<afi_hex>
-	// e.g., /secure?E20123456789ABCDEF=DA
 	status := 302
 	for key, vals := range r.Form {
 		if len(key) == 16 {
@@ -186,6 +194,7 @@ func (s *HttpServer) handleSecureJSONP(w http.ResponseWriter, r *http.Request) {
 
 func (s *HttpServer) handleProgram(w http.ResponseWriter, r *http.Request) {
 	// Program a tag: /program?<tag>=<content>&<tag>=<content>
+	// Content can be a barcode string (e.g., "1301234567") or "blank" for a blank tag.
 	for key, vals := range r.Form {
 		if len(key) != 16 || strings.HasPrefix(key, "call") || strings.HasPrefix(key, "_") {
 			continue
@@ -193,14 +202,30 @@ func (s *HttpServer) handleProgram(w http.ResponseWriter, r *http.Request) {
 		tag := strings.ToUpper(key)
 		content := vals[0]
 
-		// Write content as block 0 (first 4 bytes)
-		contentBytes := []byte(content)
-		if len(contentBytes) > 4 {
-			contentBytes = contentBytes[:4]
+		// Blank tag: write 3 blocks of zeros
+		if strings.ToLower(content) == "blank" {
+			blocks := rfid.BlankRFID501()
+			for _, block := range blocks {
+				err := s.rfid.WriteBlocks(tag, block)
+				if err != nil {
+					log.Printf("PROGRAM blank error: %v", err)
+					http.Error(w, err.Error(), 500)
+					return
+				}
+			}
+			// AFI unsecure for blank tags
+			err := s.rfid.WriteAfi(tag, rfid.AfiUnsecure)
+			if err != nil {
+				log.Printf("PROGRAM AFI error: %v", err)
+			}
+			continue
 		}
-		blockData := hex.EncodeToString(contentBytes)
 
-		err := s.rfid.WriteBlocks(tag, blockData)
+		// Encode content as RFID501 format (8 blocks)
+		rfid501Hex := rfid.EncodeRFID501Content(content)
+
+		// Write all 8 blocks in one command
+		err := s.rfid.WriteBlocks(tag, rfid501Hex)
 		if err != nil {
 			log.Printf("PROGRAM error: %v", err)
 			http.Error(w, err.Error(), 500)
@@ -208,9 +233,9 @@ func (s *HttpServer) handleProgram(w http.ResponseWriter, r *http.Request) {
 		}
 
 		// Set AFI based on content: books (130 prefix) get secure, others unsecure
-		afi := AfiUnsecure
+		afi := rfid.AfiUnsecure
 		if strings.HasPrefix(content, "130") {
-			afi = AfiSecure
+			afi = rfid.AfiSecure
 		}
 		err = s.rfid.WriteAfi(tag, afi)
 		if err != nil {

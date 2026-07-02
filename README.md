@@ -20,7 +20,7 @@ Cross-compiled from Linux to Windows. Zero Windows development environment neede
 1. Librarian opens Koha staff interface in browser
 2. Selects patron on **circulation.pl** (checkout) or **returns.pl** (check-in)
 3. Patron places book on RFID pad
-4. RFID program detects tag → reads barcode from block 0
+4. RFID program detects tag → reads barcode from RFID501 blocks
 5. JavaScript (`koha-rfid.js`) fills barcode field and submits Koha's own form
 6. Koha processes checkout/check-in natively (no external API calls)
 7. JavaScript calls `/secure.js` to set AFI bit (D7 = unsecure, DA = secure)
@@ -38,16 +38,85 @@ The RFID program only needs to:
 1. Scan tags and expose barcodes via JSONP
 2. Change AFI bits when instructed by the JavaScript
 
-## API Endpoints (compatible with existing `koha-rfid.js`)
+## Binaries
+
+Three Windows executables are built from the same Go codebase:
+
+| Binary | Size | Purpose |
+|---|---|---|
+| `koha-rfid.exe` | 8.9 MB | HTTP/JSONP server + background scan (production use) |
+| `scan.exe` | 3.1 MB | CLI scan tool with enter/leave detection |
+| `program.exe` | 3.1 MB | CLI tag programming tool |
+
+## API Endpoints (koha-rfid.exe HTTP server)
 
 | Endpoint | Method | Description |
 |---|---|---|
 | `/` | GET | HTML status page |
-| `/scan/` | GET | JSONP inventory scan → tag list with AFI + barcode |
+| `/scan/` | GET | JSONP inventory scan → tag list with AFI + RFID501 barcode |
 | `/scan/only/<filter>` | GET | Filter tags by reader name (future) |
 | `/secure?<TAG>=<AFI>` | GET | Set AFI byte (redirects back) |
 | `/secure.js?<TAG>=<AFI>&callback=...` | GET | JSONP version of secure |
-| `/program?<TAG>=<content>` | GET | Write block 0 + auto AFI |
+| `/program?<TAG>=<content>` | GET | RFID501 encode + write blocks + auto AFI |
+
+## CLI Tools
+
+### scan.exe (replaces scan.pl)
+
+Continuously scans RFID tags with enter/leave detection. Prints ISO date, tag SID, AFI, and RFID501 decoded hash.
+
+```cmd
+:: One-shot scan
+scan.exe -com COM3
+
+:: Continuous loop (Ctrl+C to stop)
+scan.exe -com COM3 -loop
+
+:: Continuous loop with CSV logging
+scan.exe -com COM3 -loop -log tags.csv
+```
+
+Output format:
+```
+2025-06-27T19:30:00 reader 3M810 enter E2001234567890ABCDEF AFI: DA { content => "1301234567", type => 1 (Book), set => 1, total => 1, branch => 0, library => 0, custom => 0 }
+2025-06-27T19:30:01 visible: E2001234567890ABCDEF
+2025-06-27T19:30:02 leave E2001234567890ABCDEF
+```
+
+### program.exe (replaces program.pl)
+
+Programs an RFID tag with RFID501-encoded content and optional AFI.
+
+```cmd
+:: Write barcode to tag (auto-detect item type)
+program.exe -com COM3 E2001234567890ABCDEF 1301234567
+
+:: Comma-separated SID and barcode
+program.exe -com COM3 E2001234567890ABCDEF,1301234567
+
+:: Specify item type and AFI
+program.exe -com COM3 -type 6 -afi 214 E2001234567890ABCDEF 1301234567
+
+:: Write generic blank tag (3× zero blocks)
+program.exe -com COM3 -blank E2001234567890ABCDEF
+
+:: Write 3M manufacturing blank (6× 0x55 + zeros)
+program.exe -com COM3 -3mblank E2001234567890ABCDEF
+
+:: Set AFI only (no content write)
+program.exe -com COM3 -afi 218 E2001234567890ABCDEF
+```
+
+Options:
+- `-com` – Serial port (default COM3)
+- `-debug` – Enable protocol debug logging
+- `-afi N` – AFI byte to write (214 = secure/DA, 218 = unsecure/D7)
+- `-type N` – RFID501 item type (1=Book, 6=CD, 2=Magazine, etc.)
+- `-set N` / `-total N` – Set index and total items (0-15)
+- `-branch N` – Branch number (0-4095)
+- `-library N` – Library number (0-1048575)
+- `-blank` – Write generic blank tag
+- `-3mblank` – Write 3M manufacturing blank
 
 ## Build for Windows from Linux
 
@@ -60,28 +129,35 @@ cd koha-rfid-go
 # Download dependencies (serial library)
 go mod tidy
 
-# Cross-compile for Windows (64-bit console binary)
+# Cross-compile all binaries for Windows (64-bit)
 GOOS=windows GOARCH=amd64 go build -o koha-rfid.exe .
+GOOS=windows GOARCH=amd64 go build -o scan.exe ./cmd/scan
+GOOS=windows GOARCH=amd64 go build -o program.exe ./cmd/program
 
-# Verify it's a Windows PE32+ binary
-file koha-rfid.exe
+# Verify Windows PE32+ binaries
+file koha-rfid.exe scan.exe program.exe
 # → PE32+ executable for MS Windows 6.01 (console), x86-64
 
-# Single static binary – no DLLs needed
+# All binaries are static – no DLLs needed
 ```
 
 ## Deployment on Windows
 
-Copy `koha-rfid.exe` plus the `examples/` folder to the staff PC.
+Copy the needed `.exe` files plus `examples/` folder to the staff PC.
 
-### Quick test
+### Quick scan test
 ```cmd
-koha-rfid.exe -com COM3 -scan
+scan.exe -com COM3
 ```
 
 ### Full server mode (command prompt)
 ```cmd
 koha-rfid.exe -com COM3 -listen localhost:9000 -debug
+```
+
+### Program a tag
+```cmd
+program.exe -com COM3 E2001234567890ABCDEF 1301234567
 ```
 
 ### Windows Service with NSSM (run in background)
@@ -127,14 +203,33 @@ Based on `Biblio::RFID::Reader::3M810` (Perl). CRC verified against known test v
 - **Read AFI**: `0A <tag8>` → AFI byte
 - **Write AFI**: `09 <tag8> <afi>` → status (retry up to 100×)
 
+## RFID501 Tag Format
+
+The program uses the 3M RFID501 standard (8 blocks × 4 bytes = 32 bytes):
+
+```
+Block 0: [04] [set/total nibbles] [00] [item type]
+Blocks 1-4: 16-byte null-padded ASCII barcode
+Block 5: branch(12 bits) + library(20 bits), big-endian
+Block 6: custom signed integer, big-endian
+Block 7: zero (must be 0x00000000)
+```
+
+**Item types**: 1=Book, 6=CD, 2=Magazine, 13=Book+Audio, 9=Book+CD, 0=Other
+
+The scan endpoint decodes RFID501 blocks to extract properly null-padded barcodes. The program endpoint encodes content using the full 8-block format before writing. Blank tags use 3× zero blocks.
+
 ## Files
 
 | File | Lines | Purpose |
 |---|---|---|
-| `rfid.go` | 390 | 3M 810 serial protocol (CRC, framing, all commands) |
-| `server.go` | 230 | HTTP/JSONP server (compatible with koha-rfid.js) |
-| `main.go` | 119 | CLI flags, background scan loop, signal handler |
-| `koha-rfid.exe` | – | Windows PE32+ binary (8.9 MB) |
+| `internal/rfid/reader.go` | 390 | 3M 810 serial protocol (CRC, framing, all commands) |
+| `internal/rfid/rfid501.go` | 170 | RFID501 tag encode/decode (8-block format, item types, barcode extraction) |
+| `internal/rfid/rfid501_test.go` | 80 | Unit tests for RFID501 roundtrip encode/decode |
+| `main.go` | 120 | HTTP server + background scan loop entry point |
+| `server.go` | 260 | HTTP/JSONP server with RFID501 integration |
+| `cmd/scan/main.go` | 140 | CLI scan tool (replaces scan.pl) |
+| `cmd/program/main.go` | 130 | CLI program tool (replaces program.pl) |
 | `examples/koha-rfid.js` | – | Browser userscript for Koha integration |
 | `start.bat` | – | Windows double-click launcher |
 
