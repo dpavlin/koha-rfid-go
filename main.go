@@ -15,7 +15,7 @@ import (
 )
 
 func main() {
-	comPort := flag.String("com", "COM3", "Serial port for 3M RFID reader (e.g., COM3 on Windows)")
+	comPort := flag.String("port", "/dev/ttyUSB0", "Serial port for 3M RFID reader")
 	debug := flag.Bool("debug", false, "Enable debug logging")
 	listen := flag.String("listen", "localhost:9000", "HTTP server listen address")
 	onlyScan := flag.Bool("scan", false, "Scan once and exit (no HTTP server)")

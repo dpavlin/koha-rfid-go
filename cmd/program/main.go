@@ -13,14 +13,13 @@ import (
 // program.pl equivalent: CLI tool to program an RFID tag with content.
 //
 // Usage:
-//   program -com COM3 [-debug] [-afi 214] [-type 1] [-set 1] [-total 1] E0_RFID_SID [barcode]
-//   program -com COM3 -blank E0_RFID_SID
-//   program -com COM3 -3mblank E0_RFID_SID
+//   program -port /dev/ttyUSB0 [-debug] [-afi 214] [-type 1] [-set 1] [-total 1] E0_RFID_SID [barcode]
+//   program -port /dev/ttyUSB0 -3mblank E0_RFID_SID
 //
-// The SID and barcode can also be comma-separated: program -com COM3 E0SID,barcode
+// The SID and barcode can also be comma-separated: program -port /dev/ttyUSB0 E0SID,barcode
 
 func main() {
-	comPort := flag.String("com", "COM3", "Serial port for 3M RFID reader")
+	comPort := flag.String("port", "/dev/ttyUSB0", "Serial port for 3M RFID reader")
 	debug := flag.Bool("debug", false, "Enable debug logging")
 	afi := flag.Int("afi", 0, "AFI byte value to write (e.g., 214 for secure, 218 for unsecure)")
 	typeOpt := flag.Int("type", 0, "RFID501 item type (1=Book, 6=CD, etc.)")

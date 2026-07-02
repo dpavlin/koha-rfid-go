@@ -17,13 +17,13 @@ import (
 // ISO date, tag SID, AFI, and RFID501 decoded content.
 //
 // Usage:
-//   scan -com COM3 [-debug] [-loop] [-log file.csv]
+//   scan -port /dev/ttyUSB0 [-debug] [-loop] [-log file.csv]
 //
 // The -loop flag runs continuously with enter/leave detection.
 // The -log flag appends ISO date,tag,content to a CSV file on first detection.
 
 func main() {
-	comPort := flag.String("com", "COM3", "Serial port for 3M RFID reader")
+	comPort := flag.String("port", "/dev/ttyUSB0", "Serial port for 3M RFID reader")
 	debug := flag.Bool("debug", false, "Enable debug logging")
 	loop := flag.Bool("loop", false, "Continuously scan (default: one-shot)")
 	logFile := flag.String("log", "", "CSV log file path for tag appearances")
