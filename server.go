@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"koha-rfid/internal/rfid"
@@ -15,6 +16,7 @@ import (
 // HttpServer provides the local JSONP API for the Koha JavaScript integration.
 type HttpServer struct {
 	listen   string
+	mu       sync.Mutex
 	rfid     *rfid.RfidReader
 	debug    bool
 	tagCache map[string]*TagInfo
@@ -68,8 +70,10 @@ func (s *HttpServer) handleIndex(w http.ResponseWriter, r *http.Request) {
 func (s *HttpServer) handleScan(w http.ResponseWriter, r *http.Request) {
 	callback := r.FormValue("callback")
 
+	s.mu.Lock()
 	tags, err := s.rfid.Inventory()
 	if err != nil {
+		s.mu.Unlock()
 		http.Error(w, fmt.Sprintf("RFID error: %v", err), 500)
 		return
 	}
@@ -126,6 +130,7 @@ func (s *HttpServer) handleScan(w http.ResponseWriter, r *http.Request) {
 		}
 		tagList = append(tagList, item)
 	}
+	s.mu.Unlock()
 
 	result["tags"] = tagList
 	jsonBytes, _ := json.Marshal(result)
@@ -153,7 +158,9 @@ func (s *HttpServer) handleSecure(w http.ResponseWriter, r *http.Request) {
 			if s.debug {
 				log.Printf("SECURE %s -> AFI %s", tag, afiHex)
 			}
+			s.mu.Lock()
 			err = s.rfid.WriteAfi(tag, afiByte[0])
+			s.mu.Unlock()
 			if err != nil {
 				log.Printf("SECURE error: %v", err)
 				http.Error(w, err.Error(), 500)
@@ -176,7 +183,9 @@ func (s *HttpServer) handleSecureJSONP(w http.ResponseWriter, r *http.Request) {
 			if err != nil || len(afiByte) != 1 {
 				continue
 			}
+			s.mu.Lock()
 			err = s.rfid.WriteAfi(tag, afiByte[0])
+			s.mu.Unlock()
 			if err != nil {
 				log.Printf("SECURE error: %v", err)
 			}
@@ -204,10 +213,12 @@ func (s *HttpServer) handleProgram(w http.ResponseWriter, r *http.Request) {
 
 		// Blank tag: write 3 blocks of zeros
 		if strings.ToLower(content) == "blank" {
+			s.mu.Lock()
 			blocks := rfid.BlankRFID501()
 			for _, block := range blocks {
 				err := s.rfid.WriteBlocks(tag, block)
 				if err != nil {
+					s.mu.Unlock()
 					log.Printf("PROGRAM blank error: %v", err)
 					http.Error(w, err.Error(), 500)
 					return
@@ -215,6 +226,7 @@ func (s *HttpServer) handleProgram(w http.ResponseWriter, r *http.Request) {
 			}
 			// AFI unsecure for blank tags
 			err := s.rfid.WriteAfi(tag, rfid.AfiUnsecure)
+			s.mu.Unlock()
 			if err != nil {
 				log.Printf("PROGRAM AFI error: %v", err)
 			}
@@ -222,11 +234,13 @@ func (s *HttpServer) handleProgram(w http.ResponseWriter, r *http.Request) {
 		}
 
 		// Encode content as RFID501 format (8 blocks)
+		s.mu.Lock()
 		rfid501Hex := rfid.EncodeRFID501Content(content)
 
 		// Write all 8 blocks in one command
 		err := s.rfid.WriteBlocks(tag, rfid501Hex)
 		if err != nil {
+			s.mu.Unlock()
 			log.Printf("PROGRAM error: %v", err)
 			http.Error(w, err.Error(), 500)
 			return
@@ -238,6 +252,7 @@ func (s *HttpServer) handleProgram(w http.ResponseWriter, r *http.Request) {
 			afi = rfid.AfiSecure
 		}
 		err = s.rfid.WriteAfi(tag, afi)
+		s.mu.Unlock()
 		if err != nil {
 			log.Printf("PROGRAM AFI error: %v", err)
 		}

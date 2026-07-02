@@ -70,12 +70,15 @@ func main() {
 	// Background scan loop that updates the tag cache
 	go func() {
 		for {
+			server.mu.Lock()
 			tags, err := reader.Inventory()
 			if err != nil {
+				server.mu.Unlock()
 				log.Printf("Scan error: %v", err)
 				time.Sleep(2 * time.Second)
 				continue
 			}
+
 			// Update tag cache with fresh data
 			for _, tag := range tags {
 				info := &TagInfo{
@@ -107,6 +110,7 @@ func main() {
 				}
 				server.tagCache[info.SID] = info
 			}
+
 			// Remove stale tags
 			for sid := range server.tagCache {
 				found := false
@@ -120,6 +124,8 @@ func main() {
 					delete(server.tagCache, sid)
 				}
 			}
+
+			server.mu.Unlock()
 			time.Sleep(500 * time.Millisecond)
 		}
 	}()
