@@ -216,21 +216,21 @@ func EncodeRFID501Content(content string) string {
 	return result
 }
 
-// BlankRFID501 returns 3 blocks of zeros (generic blank tag).
-func BlankRFID501() []string {
-	blocks := make([]string, 3)
+// BlankRFID501 returns a single hex string encoding 3 zero blocks (generic blank tag).
+func BlankRFID501() string {
+	result := ""
 	for i := 0; i < 3; i++ {
-		blocks[i] = "00000000"
+		result += "00000000"
 	}
-	return blocks
+	return result
 }
 
-// Blank3MRFID501 returns 6 blocks of 0x55 + 1 block of zeros (3M blank).
-func Blank3MRFID501() []string {
-	blocks := make([]string, 7)
+// Blank3MRFID501 returns a single hex string: 6 blocks of 0x55 + 1 block of zeros (3M blank).
+func Blank3MRFID501() string {
+	result := ""
 	for i := 0; i < 6; i++ {
-		blocks[i] = "55555555"
+		result += "55555555"
 	}
-	blocks[6] = "00000000"
-	return blocks
+	result += "00000000"
+	return result
 }

@@ -68,28 +68,15 @@ func TestRFID501LongBarcode(t *testing.T) {
 }
 
 func TestRFID501Blank(t *testing.T) {
-	blocks := BlankRFID501()
-	if len(blocks) != 3 {
-		t.Fatalf("blank: got %d blocks, want 3", len(blocks))
-	}
-	for i, b := range blocks {
-		if b != "00000000" {
-			t.Fatalf("blank block %d: got %s, want 00000000", i, b)
-		}
+	hexStr := BlankRFID501()
+	if hexStr != "000000000000000000000000" {
+		t.Fatalf("blank: got %q, want 24 zero hex bytes", hexStr)
 	}
 }
 
 func TestRFID501Blank3M(t *testing.T) {
-	blocks := Blank3MRFID501()
-	if len(blocks) != 7 {
-		t.Fatalf("blank_3m: got %d blocks, want 7", len(blocks))
-	}
-	for i := 0; i < 6; i++ {
-		if blocks[i] != "55555555" {
-			t.Fatalf("blank_3m block %d: got %s, want 55555555", i, blocks[i])
-		}
-	}
-	if blocks[6] != "00000000" {
-		t.Fatalf("blank_3m block 6: got %s, want 00000000", blocks[6])
+	hexStr := Blank3MRFID501()
+	if hexStr != "55555555555555555555555555555555555555555555555500000000" {
+		t.Fatalf("blank_3m: got %q, want 6x55555555 + 00000000", hexStr)
 	}
 }

@@ -91,21 +91,17 @@ func main() {
 	// Determine blank type
 	if *blank {
 		log.Printf("BLANK blank %s", sid)
-		blocks := rfid.BlankRFID501()
-		for _, block := range blocks {
-			err := reader.WriteBlocks(sid, block)
-			if err != nil {
-				log.Fatalf("WriteBlocks blank: %v", err)
-			}
+		blocksHex := rfid.BlankRFID501()
+		err = reader.WriteBlocks(sid, blocksHex)
+		if err != nil {
+			log.Fatalf("WriteBlocks blank: %v", err)
 		}
 	} else if *blank3M {
 		log.Printf("BLANK 3mblank %s", sid)
-		blocks := rfid.Blank3MRFID501()
-		for _, block := range blocks {
-			err := reader.WriteBlocks(sid, block)
-			if err != nil {
-				log.Fatalf("WriteBlocks 3mblank: %v", err)
-			}
+		blocksHex := rfid.Blank3MRFID501()
+		err = reader.WriteBlocks(sid, blocksHex)
+		if err != nil {
+			log.Fatalf("WriteBlocks 3mblank: %v", err)
 		}
 	} else if content != "" {
 		log.Printf("PROGRAM %s with %s", sid, content)

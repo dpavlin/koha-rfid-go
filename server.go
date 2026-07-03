@@ -146,6 +146,7 @@ func (s *HttpServer) handleScan(w http.ResponseWriter, r *http.Request) {
 
 func (s *HttpServer) handleSecure(w http.ResponseWriter, r *http.Request) {
 	status := 302
+	r.ParseForm()
 	for key, vals := range r.Form {
 		if len(key) == 16 {
 			tag := strings.ToUpper(key)
@@ -174,6 +175,7 @@ func (s *HttpServer) handleSecure(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *HttpServer) handleSecureJSONP(w http.ResponseWriter, r *http.Request) {
+	r.ParseForm()
 	callback := r.FormValue("callback")
 	for key, vals := range r.Form {
 		if len(key) == 16 {
@@ -204,6 +206,10 @@ func (s *HttpServer) handleSecureJSONP(w http.ResponseWriter, r *http.Request) {
 func (s *HttpServer) handleProgram(w http.ResponseWriter, r *http.Request) {
 	// Program a tag: /program?<tag>=<content>&<tag>=<content>
 	// Content can be a barcode string (e.g., "1301234567") or "blank" for a blank tag.
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "form parse error", 400)
+		return
+	}
 	for key, vals := range r.Form {
 		if len(key) != 16 || strings.HasPrefix(key, "call") || strings.HasPrefix(key, "_") {
 			continue
@@ -214,18 +220,16 @@ func (s *HttpServer) handleProgram(w http.ResponseWriter, r *http.Request) {
 		// Blank tag: write 3 blocks of zeros
 		if strings.ToLower(content) == "blank" {
 			s.mu.Lock()
-			blocks := rfid.BlankRFID501()
-			for _, block := range blocks {
-				err := s.rfid.WriteBlocks(tag, block)
-				if err != nil {
-					s.mu.Unlock()
-					log.Printf("PROGRAM blank error: %v", err)
-					http.Error(w, err.Error(), 500)
-					return
-				}
+			blocksHex := rfid.BlankRFID501()
+			err := s.rfid.WriteBlocks(tag, blocksHex)
+			if err != nil {
+				s.mu.Unlock()
+				log.Printf("PROGRAM blank error: %v", err)
+				http.Error(w, err.Error(), 500)
+				return
 			}
 			// AFI unsecure for blank tags
-			err := s.rfid.WriteAfi(tag, rfid.AfiUnsecure)
+			err = s.rfid.WriteAfi(tag, rfid.AfiUnsecure)
 			s.mu.Unlock()
 			if err != nil {
 				log.Printf("PROGRAM AFI error: %v", err)
