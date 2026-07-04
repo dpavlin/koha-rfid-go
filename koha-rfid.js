@@ -34,6 +34,17 @@ function rfid_secure(barcode,sid,val) {
 		$.getJSON( 'https://localhost:9000/secure.js?' + sid + '=' + val + ';callback=?' )
 }
 
+// AFI values from RFID server (always uppercase hex):
+//   DA = secured (checked in), door ignores
+//   D7 = unsecured (checked out), door beeps
+// For checkout we need DA (item is in library), for checkin we need D7 (item was on loan)
+function afi_valid_for(security, page) {
+	var s = security.toUpperCase();
+	if (page == 'circulation') return s == 'DA';
+	if (page == 'returns') return s == 'D7';
+	return false;
+}
+
 function rfid_scan(data,textStatus) {
 
 	var span = $('span#rfid');
@@ -60,17 +71,19 @@ function rfid_scan(data,textStatus) {
 
 			} else if ( t.content.substr(0,3) == '130' ) { // books
 
+				var sec = (t.security || '').toUpperCase();
+
 				if ( circulation )
 					 rfid_secure( t.content, t.sid, 'D7' );
 				if ( returns )
 					 rfid_secure( t.content, t.sid, 'DA' );
 
 				var color = 'blue';
-				if ( t.security.toUpperCase() == 'DA' ) color = 'red';
-				if ( t.security.toUpperCase() == 'D7' ) color = 'green';
-				span.text( t.content ).css('color', color);
+				if ( sec == 'DA' ) color = 'red';
+				if ( sec == 'D7' ) color = 'green';
+				span.text( t.content + ' (' + sec + ')' ).css('color', color);
 
-				if ( ! rfid_submitted && ! barcode_on_screen( t.content ) ) {
+				if ( ! rfid_submitted && ! barcode_on_screen( t.content ) && afi_valid_for(sec, circulation ? 'circulation' : 'returns') ) {
 					var last = sessionStorage.getItem('rfid_last_barcode');
 					if ( t.content != last ) {
 						sessionStorage.setItem('rfid_last_barcode', t.content);
@@ -104,6 +117,7 @@ function rfid_scan(data,textStatus) {
 
 	} else {
 		span.text( 'no tags in range' ).css('color','gray');
+		sessionStorage.removeItem('rfid_last_barcode');
 	}
 
 	if ( ! rfid_submitted ) {
