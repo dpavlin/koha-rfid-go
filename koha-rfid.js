@@ -19,6 +19,7 @@
 
 var rfid_submitted = false;
 var rfid_timeout = null;
+var rfid_poll_pending = false;
 
 function barcode_on_screen(barcode) {
 	var found = 0;
@@ -43,6 +44,47 @@ function afi_valid_for(security, page) {
 	if (page == 'circulation') return s == 'DA';
 	if (page == 'returns') return s == 'D7';
 	return false;
+}
+
+function rfid_poll() {
+	if ( rfid_poll_pending ) return;
+	rfid_poll_pending = true;
+
+	// timeout: if no response in 5 seconds, show connection error
+	var poll_timeout = window.setTimeout(function() {
+		rfid_poll_pending = false;
+		var span = $('span#rfid');
+		if ( span.size() == 0 ) {
+			span = $('ul#i18nMenu').append('<li><span id=rfid>RFID reader found<span>');
+			if ( span.size() == 0 )
+				span = $('div#login').prepend('<span id=rfid>RFID reader found</span>');
+			span = $('span#rfid');
+		}
+		span.text(
+			'RFID server not reachable (TLS error?) — ' +
+			'open https://localhost:9000 in a browser tab and accept self-signed certificate'
+		).css('color', 'orange');
+	}, 5000);
+
+	$.getJSON("https://localhost:9000/scan?callback=?", function(data, textStatus) {
+		window.clearTimeout(poll_timeout);
+		rfid_poll_pending = false;
+		rfid_scan(data, textStatus);
+	}).fail(function(jqXHR, textStatus, error) {
+		window.clearTimeout(poll_timeout);
+		rfid_poll_pending = false;
+		var span = $('span#rfid');
+		if ( span.size() == 0 ) {
+			span = $('ul#i18nMenu').append('<li><span id=rfid>RFID reader found<span>');
+			if ( span.size() == 0 )
+				span = $('div#login').prepend('<span id=rfid>RFID reader found</span>');
+			span = $('span#rfid');
+		}
+		span.text(
+			'RFID server error: ' + textStatus + ' — ' +
+			'open https://localhost:9000 in a browser tab and accept self-signed certificate'
+		).css('color', 'orange');
+	});
 }
 
 function rfid_scan(data,textStatus) {
@@ -121,14 +163,12 @@ function rfid_scan(data,textStatus) {
 	}
 
 	if ( ! rfid_submitted ) {
-		rfid_timeout = window.setTimeout( function() {
-			$.getJSON("https://localhost:9000/scan?callback=?", rfid_scan);
-		}, 1000 );
+		rfid_timeout = window.setTimeout( rfid_poll, 1000 );
 	}
 }
 
 $(document).ready( function() {
 	rfid_submitted = false;
 	rfid_timeout = null;
-	$.getJSON("https://localhost:9000/scan?callback=?", rfid_scan);
+	rfid_poll();
 });
