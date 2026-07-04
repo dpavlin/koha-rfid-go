@@ -126,10 +126,9 @@ function rfid_scan(data,textStatus) {
 				if ( returns )
 					 rfid_secure( t.content, t.sid, 'DA' );
 
-				var color = 'blue';
-				if ( sec == 'DA' ) color = 'red';
-				if ( sec == 'D7' ) color = 'green';
-				span.text( t.content + ' (' + sec + ')' ).css('color', color);
+				var label = sec == 'DA' ? 'checked in' : sec == 'D7' ? 'on loan' : 'unknown';
+				var color = sec == 'DA' ? 'red' : sec == 'D7' ? 'green' : 'blue';
+				span.text( t.content + ' (' + label + ')' ).css('color', color);
 
 				// determine which form to fill based on active tab, fall back to URL
 				var is_checkout = checkout_active || (!checkin_active && circulation);
