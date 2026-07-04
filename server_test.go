@@ -7,155 +7,243 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"koha-rfid/internal/rfidops"
 )
 
-// serverWithNilReader creates an HttpServer with a nil *rfid.RfidReader.
-// Any handler that attempts to use the reader will panic. Use recover() in tests
-// to verify the reader-dependent code paths are reached, or skip when hardware is needed.
-func serverWithNilReader() *HttpServer {
-	return &HttpServer{
-		listen:   "localhost:9000",
-		debug:    false,
-		tagCache: make(map[string]*TagInfo),
-	}
+// ---------------------------------------------------------------------------
+// Mock RfidOps for tests
+
+type mockOps struct {
+	rfidops.RfidOps                   // embed interface so we only override what we need
+	inventoryFn    func() ([]string, error)
+	readAfiFn      func(tag string) (byte, error)
+	readBlocksFn   func(tag string, start, count int) (map[int]string, error)
+	writeBlocksFn  func(tag string, data string) error
+	writeAfiFn     func(tag string, afi byte) error
 }
 
-// TestHandleIndex verifies the root endpoint returns an HTML status page.
+func (m mockOps) Inventory() ([]string, error) {
+	if m.inventoryFn != nil {
+		return m.inventoryFn()
+	}
+	return nil, nil
+}
+
+func (m mockOps) ReadAfi(tag string) (byte, error) {
+	if m.readAfiFn != nil {
+		return m.readAfiFn(tag)
+	}
+	return 0, nil
+}
+
+func (m mockOps) ReadBlocks(tag string, start, count int) (map[int]string, error) {
+	if m.readBlocksFn != nil {
+		return m.readBlocksFn(tag, start, count)
+	}
+	return nil, nil
+}
+
+func (m mockOps) WriteBlocks(tag string, data string) error {
+	if m.writeBlocksFn != nil {
+		return m.writeBlocksFn(tag, data)
+	}
+	return nil
+}
+
+func (m mockOps) WriteAfi(tag string, afi byte) error {
+	if m.writeAfiFn != nil {
+		return m.writeAfiFn(tag, afi)
+	}
+	return nil
+}
+
+// ---------------------------------------------------------------------------
+// Helpers
+
+// newTestServer creates an HttpServer with mock ops and optional listen address.
+func newTestServer(listen string) *HttpServer {
+	return NewHttpServer(listen, mockOps{}, false)
+}
+
+// newTestServerWithOps creates an HttpServer with a custom mockOps.
+func newTestServerWithOps(m mockOps) *HttpServer {
+	return NewHttpServer("", m, false)
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+
 func TestHandleIndex(t *testing.T) {
-	server := serverWithNilReader()
+	server := newTestServer("")
 	req := httptest.NewRequest("GET", "/", nil)
 	w := httptest.NewRecorder()
-
 	server.handleIndex(w, req)
-
-	resp := w.Body.String()
-	ct := w.Header().Get("Content-Type")
 
 	if w.Code != http.StatusOK {
 		t.Errorf("status = %d, want %d", w.Code, http.StatusOK)
 	}
+	ct := w.Header().Get("Content-Type")
 	if ct != "text/html" {
 		t.Errorf("Content-Type = %q, want text/html", ct)
 	}
-	if !strings.Contains(resp, "RFID Server") {
-		t.Errorf("response missing 'RFID Server' heading")
-	}
-	if !strings.Contains(resp, "Status: OK") {
-		t.Errorf("response missing 'Status: OK'")
-	}
 }
 
-// TestHandleSecureError tests error paths in handleSecure that don't need a reader.
-func TestHandleSecureError(t *testing.T) {
-	server := serverWithNilReader()
-
-	tests := []struct {
-		name   string
-		query  string
-		want   string // expected body substring
-		wantCC int    // expected HTTP status code
-	}{
-		{
-			name:   "invalid AFI hex – bad chars",
-			query:  "E2001234567890AB=ZZ",
-			want:   "invalid AFI",
-			wantCC: http.StatusBadRequest,
+// TestHandleScan tests the scan handler with mock data.
+func TestHandleScan(t *testing.T) {
+	m := mockOps{
+		inventoryFn: func() ([]string, error) {
+			return []string{"E2001234567890AB"}, nil
 		},
-		{
-			name:   "invalid AFI hex – too long",
-			query:  "E2001234567890AB=DAFF",
-			want:   "invalid AFI",
-			wantCC: http.StatusBadRequest,
+		readAfiFn: func(tag string) (byte, error) {
+			return 0xDA, nil
 		},
-		{
-			name:   "no form keys at all",
-			query:  "",
-			want:   "", // no body check – just verify redirect
-			wantCC: http.StatusFound,
+		readBlocksFn: func(tag string, start, count int) (map[int]string, error) {
+			// Return a valid RFID501 block (content "1301234567")
+			return map[int]string{
+				0: "3133303132333435", // "13012345" ASCII
+				1: "3637000000000000", // "67" + padding
+			}, nil
 		},
 	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			req := httptest.NewRequest("GET", "/secure?"+tt.query, nil)
-			w := httptest.NewRecorder()
-
-			server.handleSecure(w, req)
-
-			if w.Code != tt.wantCC {
-				t.Errorf("status = %d, want %d", w.Code, tt.wantCC)
-			}
-
-			if tt.want != "" {
-				body := w.Body.String()
-				if !strings.Contains(body, tt.want) {
-					t.Errorf("body = %q, want substring %q", body, tt.want)
-				}
-			}
-
-			// For the redirect case, check Location header
-			if tt.wantCC == http.StatusFound {
-				loc := w.Header().Get("Location")
-				if loc == "" {
-					t.Error("missing Location header on redirect")
-				}
-			}
-		})
-	}
-}
-
-// TestHandleSecurePanicOnWrite verifies that handleSecure panics when
-// it tries to call WriteAfi on a nil reader (valid AFI path).
-func TestHandleSecurePanicOnWrite(t *testing.T) {
-	server := serverWithNilReader()
-	req := httptest.NewRequest("GET", "/secure?E2001234567890AB=DA", nil)
+	server := newTestServerWithOps(m)
+	req := httptest.NewRequest("GET", "/scan/", nil)
 	w := httptest.NewRecorder()
+	server.handleScan(w, req)
 
-	defer func() {
-		if r := recover(); r == nil {
-			t.Error("expected panic on nil reader WriteAfi call, but handler completed")
-		}
-		// panic recovered – test passes
-	}()
-
-	server.handleSecure(w, req)
-}
-
-// TestHandleSecureRedirectFormat verifies the Location header format.
-func TestHandleSecureRedirectFormat(t *testing.T) {
-	server := &HttpServer{
-		listen:   "otherhost:8080",
-		debug:    false,
-		tagCache: make(map[string]*TagInfo),
+	if w.Code != http.StatusOK {
+		t.Errorf("status = %d, want %d", w.Code, http.StatusOK)
 	}
 
+	var resp map[string]interface{}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("json parse error: %v", err)
+	}
+	tags, ok := resp["tags"].([]interface{})
+	if !ok {
+		t.Fatalf("missing 'tags' array")
+	}
+	if len(tags) != 1 {
+		t.Fatalf("expected 1 tag, got %d", len(tags))
+	}
+}
+
+func TestHandleScanWithCallback(t *testing.T) {
+	m := mockOps{
+		inventoryFn: func() ([]string, error) {
+			return []string{"E2001234567890AB"}, nil
+		},
+		readAfiFn: func(tag string) (byte, error) {
+			return 0xDA, nil
+		},
+		readBlocksFn: func(tag string, start, count int) (map[int]string, error) {
+			return map[int]string{
+				0: "3133303132333435",
+				1: "3637000000000000",
+			}, nil
+		},
+	}
+	server := newTestServerWithOps(m)
+	req := httptest.NewRequest("GET", "/scan/?callback=jsonp123", nil)
+	w := httptest.NewRecorder()
+	server.handleScan(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("status = %d, want %d", w.Code, http.StatusOK)
+	}
+	ct := w.Header().Get("Content-Type")
+	if ct != "application/javascript" {
+		t.Errorf("Content-Type = %q, want application/javascript", ct)
+	}
+	body := w.Body.String()
+	if !strings.HasPrefix(body, "jsonp123(") {
+		t.Errorf("response doesn't start with callback wrapper")
+	}
+}
+
+func TestHandleScanError(t *testing.T) {
+	m := mockOps{
+		inventoryFn: func() ([]string, error) {
+			return nil, fmt.Errorf("mock inventory error")
+		},
+	}
+	server := newTestServerWithOps(m)
+	req := httptest.NewRequest("GET", "/scan/", nil)
+	w := httptest.NewRecorder()
+	server.handleScan(w, req)
+
+	if w.Code != http.StatusInternalServerError {
+		t.Errorf("status = %d, want %d", w.Code, http.StatusInternalServerError)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Secure handler tests
+
+func TestHandleSecureRedirect(t *testing.T) {
+	server := newTestServer("otherhost:8080")
 	req := httptest.NewRequest("GET", "/secure", nil)
 	w := httptest.NewRecorder()
-
-	// No form keys → redirect with 302
 	server.handleSecure(w, req)
 
 	if w.Code != http.StatusFound {
 		t.Errorf("status = %d, want %d", w.Code, http.StatusFound)
 	}
+	loc := w.Header().Get("Location")
 	wantLoc := fmt.Sprintf("http://%s/", server.listen)
-	gotLoc := w.Header().Get("Location")
-	if gotLoc != wantLoc {
-		t.Errorf("Location = %q, want %q", gotLoc, wantLoc)
+	if loc != wantLoc {
+		t.Errorf("Location = %q, want %q", loc, wantLoc)
 	}
 }
 
-// TestHandleSecureJSONPNonReader tests handleSecureJSONP paths that don't need a
-// reader (error responses, key filtering, callback wrapping). These complete without panic.
+func TestHandleSecureSuccess(t *testing.T) {
+	m := mockOps{
+		writeAfiFn: func(tag string, afi byte) error {
+			return nil
+		},
+	}
+	server := newTestServerWithOps(m)
+	req := httptest.NewRequest("GET", "/secure?E2001234567890AB=DA", nil)
+	w := httptest.NewRecorder()
+	server.handleSecure(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("status = %d, want %d", w.Code, http.StatusOK)
+	}
+}
+
+func TestHandleSecureError(t *testing.T) {
+	m := mockOps{
+		writeAfiFn: func(tag string, afi byte) error {
+			return fmt.Errorf("mock write error")
+		},
+	}
+	server := newTestServerWithOps(m)
+	req := httptest.NewRequest("GET", "/secure?E2001234567890AB=DA", nil)
+	w := httptest.NewRecorder()
+	server.handleSecure(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want %d", w.Code, http.StatusBadRequest)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Secure JSONP tests
+
 func TestHandleSecureJSONPNonReader(t *testing.T) {
-	server := serverWithNilReader()
+	m := mockOps{
+		writeAfiFn: func(tag string, afi byte) error {
+			return nil
+		},
+	}
+	server := newTestServerWithOps(m)
 
 	tests := []struct {
 		name       string
 		query      string
-		wantOK     int    // 1 for success, 0 for error
-		wantError  string // expected error message substring (empty for success)
-		expectJSON bool
+		wantOK     int
+		wantError  string
 		expectJSONP bool
 	}{
 		{
@@ -163,14 +251,14 @@ func TestHandleSecureJSONPNonReader(t *testing.T) {
 			query:      "E2001234567890AB=ZZ",
 			wantOK:     0,
 			wantError:  "invalid AFI hex",
-			expectJSON: true,
+			expectJSONP: false,
 		},
 		{
 			name:       "invalid AFI hex – too long",
 			query:      "E2001234567890AB=DAFF",
 			wantOK:     0,
 			wantError:  "invalid AFI hex",
-			expectJSON: true,
+			expectJSONP: false,
 		},
 		{
 			name:       "invalid AFI hex with callback",
@@ -184,28 +272,28 @@ func TestHandleSecureJSONPNonReader(t *testing.T) {
 			query:      "E20012345678AB=DA",
 			wantOK:     1,
 			wantError:  "",
-			expectJSON: true,
+			expectJSONP: false,
 		},
 		{
 			name:       "key starting with 'call' – skipped",
 			query:      "callback1234567890=DA",
 			wantOK:     1,
 			wantError:  "",
-			expectJSON: true,
+			expectJSONP: false,
 		},
 		{
 			name:       "key starting with '_' – skipped",
 			query:      "_E2001234567890AB=DA",
 			wantOK:     1,
 			wantError:  "",
-			expectJSON: true,
+			expectJSONP: false,
 		},
 		{
 			name:       "no form keys at all",
 			query:      "",
 			wantOK:     1,
 			wantError:  "",
-			expectJSON: true,
+			expectJSONP: false,
 		},
 	}
 
@@ -213,11 +301,11 @@ func TestHandleSecureJSONPNonReader(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			req := httptest.NewRequest("GET", "/secure.js?"+tt.query, nil)
 			w := httptest.NewRecorder()
-
 			server.handleSecureJSONP(w, req)
-			resp := w.Body.String()
 
+			resp := w.Body.String()
 			ct := w.Header().Get("Content-Type")
+
 			if tt.expectJSONP {
 				if ct != "application/javascript" {
 					t.Errorf("Content-Type = %q, want application/javascript", ct)
@@ -225,8 +313,7 @@ func TestHandleSecureJSONPNonReader(t *testing.T) {
 				if !strings.HasPrefix(resp, "jsonp123(") {
 					t.Errorf("response doesn't start with callback wrapper")
 				}
-			}
-			if tt.expectJSON {
+			} else {
 				if ct != "application/json" {
 					t.Errorf("Content-Type = %q, want application/json", ct)
 				}
@@ -262,31 +349,47 @@ func TestHandleSecureJSONPNonReader(t *testing.T) {
 	}
 }
 
-// TestHandleSecureJSONPPanicsOnReader verifies that handleSecureJSONP panics when
-// it tries to call WriteAfi on a nil reader (valid AFI hex case).
-func TestHandleSecureJSONPPanicsOnReader(t *testing.T) {
-	server := serverWithNilReader()
-	req := httptest.NewRequest("GET", "/secure.js?E2001234567890AB=DA&callback=jsonp123", nil)
+func TestHandleSecureJSONPSuccess(t *testing.T) {
+	m := mockOps{
+		writeAfiFn: func(tag string, afi byte) error {
+			return nil
+		},
+	}
+	server := newTestServerWithOps(m)
+	req := httptest.NewRequest("GET", "/secure.js?E2001234567890AB=DA", nil)
 	w := httptest.NewRecorder()
+	server.handleSecureJSONP(w, req)
 
-	panicked := false
-	func() {
-		defer func() {
-			if r := recover(); r != nil {
-				panicked = true
-			}
-		}()
-		server.handleSecureJSONP(w, req)
-	}()
-	if !panicked {
-		t.Error("expected panic on nil reader WriteAfi call, but handler completed")
+	if w.Code != http.StatusOK {
+		t.Errorf("status = %d, want %d", w.Code, http.StatusOK)
+	}
+
+	var result map[string]interface{}
+	if err := json.Unmarshal(w.Body.Bytes(), &result); err != nil {
+		t.Fatalf("json parse error: %v", err)
+	}
+	okVal, ok := result["ok"].(float64)
+	if !ok {
+		t.Fatalf("missing 'ok'")
+	}
+	if int(okVal) != 1 {
+		t.Errorf("ok = %d, want 1", int(okVal))
 	}
 }
 
-// TestHandleProgramNonReader tests handleProgram paths that don't need a reader
-// (key filtering, callback wrapping). These complete without panic.
+// ---------------------------------------------------------------------------
+// Program handler tests
+
 func TestHandleProgramNonReader(t *testing.T) {
-	server := serverWithNilReader()
+	m := mockOps{
+		writeBlocksFn: func(tag string, data string) error {
+			return nil
+		},
+		writeAfiFn: func(tag string, afi byte) error {
+			return nil
+		},
+	}
+	server := newTestServerWithOps(m)
 
 	tests := []struct {
 		name        string
@@ -295,24 +398,24 @@ func TestHandleProgramNonReader(t *testing.T) {
 		expectJSONP bool
 	}{
 		{
-			name:        "short key (<16 chars) – skipped",
-			query:       "E20012345678AB=1301234567",
-			expectJSON:  true,
+			name:       "short key (<16 chars) – skipped",
+			query:      "E20012345678AB=1301234567",
+			expectJSON: true,
 		},
 		{
-			name:        "key starting with 'call' – skipped",
-			query:       "callback1234567890=1301234567",
-			expectJSON:  true,
+			name:       "key starting with 'call' – skipped",
+			query:      "callback1234567890=1301234567",
+			expectJSON: true,
 		},
 		{
-			name:        "key starting with '_' – skipped",
-			query:       "_E2001234567890AB=1301234567",
-			expectJSON:  true,
+			name:       "key starting with '_' – skipped",
+			query:      "_E2001234567890AB=1301234567",
+			expectJSON: true,
 		},
 		{
-			name:        "no form keys at all",
-			query:       "",
-			expectJSON:  true,
+			name:       "no form keys at all",
+			query:      "",
+			expectJSON: true,
 		},
 		{
 			name:        "callback wrapping only (no tag keys)",
@@ -325,11 +428,15 @@ func TestHandleProgramNonReader(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			req := httptest.NewRequest("GET", "/program?"+tt.query, nil)
 			w := httptest.NewRecorder()
-
 			server.handleProgram(w, req)
-			resp := w.Body.String()
 
+			if w.Code != http.StatusOK {
+				t.Errorf("status = %d, want %d", w.Code, http.StatusOK)
+			}
+
+			resp := w.Body.String()
 			ct := w.Header().Get("Content-Type")
+
 			if tt.expectJSONP {
 				if ct != "application/javascript" {
 					t.Errorf("Content-Type = %q, want application/javascript", ct)
@@ -365,55 +472,128 @@ func TestHandleProgramNonReader(t *testing.T) {
 	}
 }
 
-// TestHandleProgramPanicsOnReader verifies that handleProgram panics when it
-// tries to call WriteBlocks on a nil reader (valid tag + content cases).
-// These are expected panics and verify the reader code path is reached.
-func TestHandleProgramPanicsOnReader(t *testing.T) {
-	tests := []struct {
-		name  string
-		query string
-	}{
-		{
-			name:  "valid barcode with callback",
-			query: "E2001234567890AB=1301234567&callback=jsonp123",
+func TestHandleProgramSuccess(t *testing.T) {
+	m := mockOps{
+		writeBlocksFn: func(tag string, data string) error {
+			return nil
 		},
-		{
-			name:  "blank content with callback",
-			query: "E2001234567890AB=blank&callback=jsonp123",
-		},
-		{
-			name:  "multiple valid tags",
-			query: "E2001234567890AB=1301234567&E2001234567890AC=999test",
+		writeAfiFn: func(tag string, afi byte) error {
+			return nil
 		},
 	}
+	server := newTestServerWithOps(m)
+	req := httptest.NewRequest("GET", "/program?E2001234567890AB=1301234567", nil)
+	w := httptest.NewRecorder()
+	server.handleProgram(w, req)
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			server := serverWithNilReader()
-			req := httptest.NewRequest("GET", "/program?"+tt.query, nil)
-			w := httptest.NewRecorder()
+	if w.Code != http.StatusOK {
+		t.Errorf("status = %d, want %d", w.Code, http.StatusOK)
+	}
 
-			panicked := false
-			func() {
-				defer func() {
-					if r := recover(); r != nil {
-						panicked = true
-					}
-				}()
-				server.handleProgram(w, req)
-			}()
-			if !panicked {
-				t.Error("expected panic on nil reader (WriteBlocks), but handler completed")
-			}
-		})
+	var result map[string]interface{}
+	if err := json.Unmarshal(w.Body.Bytes(), &result); err != nil {
+		t.Fatalf("json parse error: %v", err)
+	}
+	okVal, ok := result["ok"].(float64)
+	if !ok {
+		t.Fatalf("missing 'ok'")
+	}
+	if int(okVal) != 1 {
+		t.Errorf("ok = %d, want 1", int(okVal))
 	}
 }
 
-// TestNewHttpServer verifies the constructor creates a properly initialized server.
+func TestHandleProgramError(t *testing.T) {
+	m := mockOps{
+		writeBlocksFn: func(tag string, data string) error {
+			return fmt.Errorf("mock write error")
+		},
+	}
+	server := newTestServerWithOps(m)
+	req := httptest.NewRequest("GET", "/program?E2001234567890AB=1301234567", nil)
+	w := httptest.NewRecorder()
+	server.handleProgram(w, req)
+
+	if w.Code != http.StatusInternalServerError {
+		t.Errorf("status = %d, want %d", w.Code, http.StatusInternalServerError)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Background scan tests
+
+func TestBackgroundScan(t *testing.T) {
+	m := mockOps{
+		inventoryFn: func() ([]string, error) {
+			return []string{"E2001234567890AB"}, nil
+		},
+		readAfiFn: func(tag string) (byte, error) {
+			return 0xDA, nil
+		},
+		readBlocksFn: func(tag string, start, count int) (map[int]string, error) {
+			return map[int]string{0: "3133303132333435", 1: "3637000000000000"}, nil
+		},
+	}
+	server := newTestServerWithOps(m)
+
+	if err := server.BackgroundScan(); err != nil {
+		t.Fatalf("BackgroundScan error: %v", err)
+	}
+
+	server.mu.Lock()
+	info, ok := server.tagCache["E2001234567890AB"]
+	server.mu.Unlock()
+	if !ok {
+		t.Error("tag not found in cache after scan")
+	} else if info.SID != "E2001234567890AB" {
+		t.Errorf("SID = %q, want %q", info.SID, "E2001234567890AB")
+	}
+}
+
+func TestBackgroundScanStaleRemoval(t *testing.T) {
+	m := mockOps{
+		inventoryFn: func() ([]string, error) {
+			return []string{}, nil // no tags → stale should be removed
+		},
+	}
+	server := newTestServerWithOps(m)
+
+	// Seed cache with a stale tag
+	server.mu.Lock()
+	server.tagCache["STALE1234567890"] = &rfidops.TagInfo{SID: "STALE1234567890"}
+	server.mu.Unlock()
+
+	if err := server.BackgroundScan(); err != nil {
+		t.Fatalf("BackgroundScan error: %v", err)
+	}
+
+	server.mu.Lock()
+	_, ok := server.tagCache["STALE1234567890"]
+	server.mu.Unlock()
+	if ok {
+		t.Error("stale tag should have been removed from cache")
+	}
+}
+
+func TestBackgroundScanError(t *testing.T) {
+	m := mockOps{
+		inventoryFn: func() ([]string, error) {
+			return nil, fmt.Errorf("mock inventory error")
+		},
+	}
+	server := newTestServerWithOps(m)
+
+	err := server.BackgroundScan()
+	if err == nil {
+		t.Error("expected error from BackgroundScan, got nil")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// NewHttpServer tests
+
 func TestNewHttpServer(t *testing.T) {
-	// We can't create a real rfid.RfidReader without hardware, but we can
-	// verify the constructor handles nil gracefully and sets defaults.
-	server := NewHttpServer("", nil, true)
+	server := NewHttpServer("", mockOps{}, true)
 
 	if server.listen != "" {
 		t.Errorf("listen = %q, want empty (Run() applies default)", server.listen)
@@ -421,58 +601,41 @@ func TestNewHttpServer(t *testing.T) {
 	if server.debug != true {
 		t.Errorf("debug = %v, want true", server.debug)
 	}
-	if server.rfid != nil {
-		t.Errorf("rfid should be nil since we passed nil")
+	if server.rfidOps == nil {
+		t.Errorf("rfidOps should be non-nil")
 	}
 	if server.tagCache == nil {
 		t.Errorf("tagCache should be initialized")
 	}
-	if len(server.tagCache) != 0 {
-		t.Errorf("tagCache should be empty, got %d entries", len(server.tagCache))
-	}
 }
 
-// TestRunMuxRegistration verifies that Run() registers all expected handler paths.
 func TestRunMuxRegistration(t *testing.T) {
-	server := NewHttpServer("", nil, false)
+	server := NewHttpServer("", mockOps{}, false)
+	mux := http.NewServeMux()
+	mux.HandleFunc("/", server.handleIndex)
+	mux.HandleFunc("/scan/", server.handleScan)
+	mux.HandleFunc("/secure", server.handleSecure)
+	mux.HandleFunc("/secure.js", server.handleSecureJSONP)
+	mux.HandleFunc("/program", server.handleProgram)
 
-	// Run would normally start an HTTP server, but we can check that
-	// the mux is set up correctly by inspecting the handler registration.
-	// Since ServeMux doesn't expose registered patterns, we verify
-	// that Run() doesn't panic and that the listen address is used.
-	if server.listen != "" {
-		t.Errorf("listen should be empty before Run, got %q", server.listen)
+	// Verify each handler responds (we don't start the server, just check routing)
+	tests := []struct {
+		path     string
+		wantCode int
+	}{
+		{"/", 200},
+		{"/scan/", 200},
+		{"/secure", 302},
+		{"/secure.js", 200},
+		{"/program", 200},
+	}
+
+	for _, tt := range tests {
+		req := httptest.NewRequest("GET", tt.path, nil)
+		w := httptest.NewRecorder()
+		mux.ServeHTTP(w, req)
+		if w.Code != tt.wantCode {
+			t.Errorf("%s status = %d, want %d", tt.path, w.Code, tt.wantCode)
+		}
 	}
 }
-
-// TestHandleScanPanicOnNilReader verifies that handleScan panics on nil reader.
-func TestHandleScanPanicOnNilReader(t *testing.T) {
-	server := serverWithNilReader()
-	req := httptest.NewRequest("GET", "/scan/", nil)
-	w := httptest.NewRecorder()
-
-	defer func() {
-		if r := recover(); r == nil {
-			t.Error("expected panic on nil reader Inventory call, but handler completed")
-		}
-	}()
-
-	server.handleScan(w, req)
-}
-
-// TestHandleProgramPanicOnBlank verifies blank content path panics on nil reader.
-func TestHandleProgramPanicOnBlank(t *testing.T) {
-	server := serverWithNilReader()
-	req := httptest.NewRequest("GET", "/program?E2001234567890AB=blank", nil)
-	w := httptest.NewRecorder()
-
-	defer func() {
-		if r := recover(); r == nil {
-			t.Error("expected panic on nil reader WriteBlocks call, but handler completed")
-		}
-	}()
-
-	server.handleProgram(w, req)
-}
-
-

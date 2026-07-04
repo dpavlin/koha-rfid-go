@@ -11,16 +11,13 @@ import (
 	"time"
 
 	"koha-rfid/internal/rfid"
+	"koha-rfid/internal/rfidops"
 )
 
-// scan.pl equivalent: CLI tool that continuously scans RFID tags and prints
-// ISO date, tag SID, AFI, and RFID501 decoded content.
+// CLI tool that continuously scans RFID tags and prints enter/leave events.
 //
 // Usage:
 //   scan -port /dev/ttyUSB0 [-debug] [-loop] [-log file.csv]
-//
-// The -loop flag runs continuously with enter/leave detection.
-// The -log flag appends ISO date,tag,content to a CSV file on first detection.
 
 func main() {
 	comPort := flag.String("port", "/dev/ttyUSB0", "Serial port for 3M RFID reader")
@@ -72,7 +69,7 @@ func main() {
 		default:
 		}
 
-		tags, err := reader.Inventory()
+		result, err := rfidops.Scan(reader)
 		if err != nil {
 			log.Printf("Scan error: %v", err)
 			time.Sleep(1 * time.Second)
@@ -81,53 +78,22 @@ func main() {
 
 		// Build set of current tags
 		current := make(map[string]bool)
-		for _, t := range tags {
-			current[t] = true
+		for _, t := range result.Tags {
+			current[t.SID] = true
 		}
 
-		// For each tag present, read AFI and blocks, print details
-		for _, tag := range tags {
-			afi, err := reader.ReadAfi(tag)
-			afiStr := ""
-			if err == nil {
-				afiStr = fmt.Sprintf("%02X", afi)
-			}
-
-			// Decode RFID501
-			blocks, err := reader.ReadBlocks(tag, 0, 8)
-			content := ""
-			var decoded *rfid.RFID501Tag
-			if err == nil && len(blocks) > 0 {
-				blockHexes := make([]string, len(blocks))
-				for i := 0; i < len(blocks); i++ {
-					if b, ok := blocks[i]; ok {
-						blockHexes[i] = b
-					}
-				}
-				decoded = rfid.DecodeRFID501(blockHexes)
-				if decoded != nil {
-					content = decoded.Content
-				} else {
-					if b0, ok := blocks[0]; ok {
-						bb, _ := hexDecodeString(b0)
-						content = string(bb)
-					}
-				}
-			}
-
-			// Enter detection: print when tag was NOT in previous scan
-			if !prevTags[tag] {
+		// Enter detection: print when tag was NOT in previous scan
+		for _, info := range result.Tags {
+			if !prevTags[info.SID] {
 				fmt.Printf("%s reader 3M810 enter %s AFI: %s %s\n",
-					isoDate(), strings.ToUpper(tag), afiStr, formatDecoded(decoded))
+					isoDate(), strings.ToUpper(info.SID), info.Security, info.Content)
 
 				// Log to CSV on first appearance
-				if logFh != nil && content != "" {
-					fmt.Fprintf(logFh, "%s,%s,%s\n", isoDate(), strings.ToUpper(tag), content)
+				if logFh != nil && info.Content != "" {
+					fmt.Fprintf(logFh, "%s,%s,%s\n", isoDate(), strings.ToUpper(info.SID), info.Content)
 				}
 			}
-
-			// Mark as seen in this scan
-			prevTags[tag] = true
+			prevTags[info.SID] = true
 		}
 
 		// Leave detection: tags that were in prevTags but not in current
@@ -139,8 +105,12 @@ func main() {
 		}
 
 		// Print visible tags summary
-		if len(tags) > 0 {
-			fmt.Printf("%s visible: %s\n", isoDate(), strings.Join(tags, " "))
+		sids := make([]string, len(result.Tags))
+		for i, info := range result.Tags {
+			sids[i] = info.SID
+		}
+		if len(result.Tags) > 0 {
+			fmt.Printf("%s visible: %s\n", isoDate(), strings.Join(sids, " "))
 		} else {
 			fmt.Printf("%s visible: \n", isoDate())
 		}
@@ -150,41 +120,4 @@ func main() {
 		}
 		time.Sleep(1 * time.Second)
 	}
-}
-
-func formatDecoded(d *rfid.RFID501Tag) string {
-	if d == nil {
-		return ""
-	}
-	return fmt.Sprintf("{ content => %q, type => %d (%s), set => %d, total => %d, branch => %d, library => %d, custom => %d }",
-		d.Content, d.Type, d.TypeLabel, d.Set, d.Total, d.Branch, d.Library, d.Custom)
-}
-
-func hexDecodeString(s string) ([]byte, error) {
-	buf := make([]byte, len(s)/2)
-	for i := 0; i < len(s); i += 2 {
-		v, ok := fromHexChar(s[i])
-		if !ok {
-			return nil, fmt.Errorf("invalid hex char: %c", s[i])
-		}
-		buf[i/2] = v << 4
-		v, ok = fromHexChar(s[i+1])
-		if !ok {
-			return nil, fmt.Errorf("invalid hex char: %c", s[i+1])
-		}
-		buf[i/2] |= v
-	}
-	return buf, nil
-}
-
-func fromHexChar(c byte) (byte, bool) {
-	switch {
-	case '0' <= c && c <= '9':
-		return c - '0', true
-	case 'a' <= c && c <= 'f':
-		return c - 'a' + 10, true
-	case 'A' <= c && c <= 'F':
-		return c - 'A' + 10, true
-	}
-	return 0, false
 }

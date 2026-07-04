@@ -8,9 +8,10 @@ import (
 	"strings"
 
 	"koha-rfid/internal/rfid"
+	"koha-rfid/internal/rfidops"
 )
 
-// program.pl equivalent: CLI tool to program an RFID tag with content.
+// CLI tool to program an RFID tag with content.
 //
 // Usage:
 //   program -port /dev/ttyUSB0 [-debug] [-afi 214] [-type 1] [-set 1] [-total 1] E0_RFID_SID [barcode]
@@ -27,8 +28,8 @@ func main() {
 	total := flag.Int("total", 1, "Total items in set (0-15)")
 	branch := flag.Int("branch", 0, "Branch number (12 bits, 0-4095)")
 	library := flag.Int("library", 0, "Library number (20 bits, 0-1048575)")
-	blank := flag.Bool("blank", false, "Write generic blank tag (3× zero blocks)")
-	blank3M := flag.Bool("3mblank", false, "Write 3M manufacturing blank (6× 0x55 + zeros)")
+	blank := flag.Bool("blank", false, "Write generic blank tag (3x zero blocks)")
+	blank3M := flag.Bool("3mblank", false, "Write 3M manufacturing blank (6x 0x55 + zeros)")
 	flag.Parse()
 
 	args := flag.Args()
@@ -39,7 +40,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	sid := args[0]
+	sid := strings.ToUpper(strings.TrimSpace(args[0]))
 	content := ""
 	if len(args) >= 2 {
 		content = args[1]
@@ -49,12 +50,11 @@ func main() {
 	if strings.Contains(sid, ",") && content == "" {
 		parts := strings.Split(sid, ",")
 		if len(parts) >= 2 {
-			sid = parts[0]
+			sid = strings.ToUpper(strings.TrimSpace(parts[0]))
 			content = parts[1]
 		}
 	}
 
-	sid = strings.ToUpper(strings.TrimSpace(sid))
 	if len(sid) != 16 {
 		log.Fatalf("SID must be 16 hex chars, got %q (len=%d)", sid, len(sid))
 	}
@@ -88,28 +88,35 @@ func main() {
 		log.Printf("Warning: tag %s not found in inventory (will attempt anyway)", sid)
 	}
 
-	// Determine blank type
-	if *blank {
-		log.Printf("BLANK blank %s", sid)
-		blocksHex := rfid.BlankRFID501()
-		err = reader.WriteBlocks(sid, blocksHex)
-		if err != nil {
-			log.Fatalf("WriteBlocks blank: %v", err)
-		}
-	} else if *blank3M {
+	// Handle 3M blank separately (uses different block data)
+	if *blank3M {
 		log.Printf("BLANK 3mblank %s", sid)
 		blocksHex := rfid.Blank3MRFID501()
-		err = reader.WriteBlocks(sid, blocksHex)
-		if err != nil {
+		if err := reader.WriteBlocks(sid, blocksHex); err != nil {
 			log.Fatalf("WriteBlocks 3mblank: %v", err)
 		}
+		if *afi != 0 {
+			log.Printf("AFI %s with %d", sid, *afi)
+			if err := reader.WriteAfi(sid, byte(*afi)); err != nil {
+				log.Fatalf("WriteAfi: %v", err)
+			}
+		}
+		log.Printf("Done")
+		return
+	}
+
+	// Build ProgramOp
+	var op rfidops.ProgramOp
+
+	if *blank {
+		log.Printf("BLANK blank %s", sid)
+		op = rfidops.ProgramOp{SID: sid, Content: "blank"}
 	} else if content != "" {
 		log.Printf("PROGRAM %s with %s", sid, content)
 
-		// Build RFID501 hash (matches Perl's from_hash)
+		// Auto-detect type if not specified
 		itemType := byte(*typeOpt)
 		if itemType == 0 {
-			// Auto-detect: books (130 prefix) get type 1
 			if strings.HasPrefix(content, "130") {
 				itemType = rfid.ItemTypeBook
 			} else {
@@ -117,34 +124,35 @@ func main() {
 			}
 		}
 
-		tag := &rfid.RFID501Tag{
-			Set:     *set,
-			Total:   *total,
-			Type:    itemType,
+		op = rfidops.ProgramOp{
+			SID:     sid,
 			Content: content,
-			Branch:  *branch,
-			Library: *library,
-			Custom:  0,
-		}
-
-		encoded := rfid.EncodeRFID501(tag)
-		fullHex := ""
-		for _, b := range encoded {
-			fullHex += b
-		}
-		err := reader.WriteBlocks(sid, fullHex)
-		if err != nil {
-			log.Fatalf("WriteBlocks: %v", err)
+			RFID501Tag: &rfid.RFID501Tag{
+				Set:     *set,
+				Total:   *total,
+				Type:    itemType,
+				Content: content,
+				Branch:  *branch,
+				Library: *library,
+				Custom:  0,
+			},
 		}
 	} else {
 		log.Fatalf("No content, -blank, or -3mblank specified; nothing to write")
 	}
 
-	// Write AFI if requested
+	res := rfidops.Program(reader, []rfidops.ProgramOp{op})
+	if len(res.Errors) > 0 {
+		for _, e := range res.Errors {
+			log.Printf("Program error: %s", e)
+		}
+		log.Fatalf("Program failed")
+	}
+
+	// Write AFI if requested (overrides Program's auto-detected AFI)
 	if *afi != 0 {
 		log.Printf("AFI %s with %d", sid, *afi)
-		err := reader.WriteAfi(sid, byte(*afi))
-		if err != nil {
+		if err := reader.WriteAfi(sid, byte(*afi)); err != nil {
 			log.Fatalf("WriteAfi: %v", err)
 		}
 	}
