@@ -283,7 +283,7 @@ func (s *HttpServer) handleProgram(w http.ResponseWriter, r *http.Request) {
 	callback := r.FormValue("callback")
 	if callback != "" {
 		w.Header().Set("Content-Type", "application/javascript")
-		fmt.Fprintf(w, "%s({ok:1})", callback)
+		fmt.Fprintf(w, "%s(%s)", callback, `{"ok":1}`)
 	} else {
 		w.Header().Set("Content-Type", "application/json")
 		w.Write([]byte(`{"ok":1}`))
