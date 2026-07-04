@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"koha-rfid/internal/rfid"
 	"koha-rfid/internal/rfidops"
@@ -26,9 +27,14 @@ func genSelfSignedCert() (certFile, keyFile string, err error) {
 	}
 
 	template := x509.Certificate{
-		SerialNumber: big.NewInt(1),
-		Subject:      pkix.Name{Organization: []string{"RFID Server"}},
-		DNSNames:     []string{"localhost"},
+		SerialNumber:          big.NewInt(1),
+		Subject:               pkix.Name{Organization: []string{"RFID Server"}},
+		DNSNames:              []string{"localhost"},
+		NotBefore:             time.Now().Add(-1 * time.Hour),
+		NotAfter:              time.Now().Add(365 * 24 * time.Hour),
+		KeyUsage:              x509.KeyUsageKeyEncipherment | x509.KeyUsageDigitalSignature,
+		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+		BasicConstraintsValid: true,
 	}
 	der, err := x509.CreateCertificate(rand.Reader, &template, &template, &key.PublicKey, key)
 	if err != nil {
