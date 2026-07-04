@@ -178,19 +178,37 @@ func (s *HttpServer) handleSecureJSONP(w http.ResponseWriter, r *http.Request) {
 	r.ParseForm()
 	callback := r.FormValue("callback")
 	for key, vals := range r.Form {
-		if len(key) == 16 {
-			tag := strings.ToUpper(key)
-			afiHex := vals[0]
-			afiByte, err := hex.DecodeString(afiHex)
-			if err != nil || len(afiByte) != 1 {
-				continue
+		if len(key) != 16 || strings.HasPrefix(key, "call") || strings.HasPrefix(key, "_") {
+			continue
+		}
+		tag := strings.ToUpper(key)
+		afiHex := vals[0]
+		afiByte, err := hex.DecodeString(afiHex)
+		if err != nil || len(afiByte) != 1 {
+			errResp := fmt.Sprintf(`{"ok":0,"error":"invalid AFI hex %s"}`, afiHex)
+			if callback != "" {
+				w.Header().Set("Content-Type", "application/javascript")
+				fmt.Fprintf(w, "%s(%s)", callback, errResp)
+			} else {
+				w.Header().Set("Content-Type", "application/json")
+				w.Write([]byte(errResp))
 			}
-			s.mu.Lock()
-			err = s.rfid.WriteAfi(tag, afiByte[0])
-			s.mu.Unlock()
-			if err != nil {
-				log.Printf("SECURE error: %v", err)
+			return
+		}
+		s.mu.Lock()
+		err = s.rfid.WriteAfi(tag, afiByte[0])
+		s.mu.Unlock()
+		if err != nil {
+			errResp := fmt.Sprintf(`{"ok":0,"error":"%v"}`, err)
+			log.Printf("SECURE error: %v", err)
+			if callback != "" {
+				w.Header().Set("Content-Type", "application/javascript")
+				fmt.Fprintf(w, "%s(%s)", callback, errResp)
+			} else {
+				w.Header().Set("Content-Type", "application/json")
+				w.Write([]byte(errResp))
 			}
+			return
 		}
 	}
 	jsonResp := `{"ok":1}`
