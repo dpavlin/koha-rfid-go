@@ -1,23 +1,67 @@
 package main
 
 import (
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/pem"
 	"flag"
 	"fmt"
 	"log"
+	"math/big"
 	"os"
 	"os/signal"
 	"syscall"
-	"time"
 
 	"koha-rfid/internal/rfid"
 	"koha-rfid/internal/rfidops"
 )
+
+func genSelfSignedCert() (certFile, keyFile string, err error) {
+	// Generate a self-signed cert for localhost
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		return "", "", fmt.Errorf("generate key: %w", err)
+	}
+
+	template := x509.Certificate{
+		SerialNumber: big.NewInt(1),
+		Subject:      pkix.Name{Organization: []string{"RFID Server"}},
+		DNSNames:     []string{"localhost"},
+	}
+	der, err := x509.CreateCertificate(rand.Reader, &template, &template, &key.PublicKey, key)
+	if err != nil {
+		return "", "", fmt.Errorf("create cert: %w", err)
+	}
+
+	certFile = "rfid-localhost.crt"
+	keyFile = "rfid-localhost.key"
+
+	certOut, err := os.Create(certFile)
+	if err != nil {
+		return "", "", err
+	}
+	pem.Encode(certOut, &pem.Block{Type: "CERTIFICATE", Bytes: der})
+	certOut.Close()
+
+	keyOut, err := os.Create(keyFile)
+	if err != nil {
+		return "", "", err
+	}
+	pem.Encode(keyOut, &pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(key)})
+	keyOut.Close()
+
+	log.Printf("Generated self-signed cert: %s, key: %s", certFile, keyFile)
+	return certFile, keyFile, nil
+}
 
 func main() {
 	comPort := flag.String("port", "/dev/ttyUSB0", "Serial port for 3M RFID reader")
 	debug := flag.Bool("debug", false, "Enable debug logging")
 	listen := flag.String("listen", "localhost:9000", "HTTP server listen address")
 	onlyScan := flag.Bool("scan", false, "Scan once and exit (no HTTP server)")
+	tlsMode := flag.Bool("tls", false, "Serve HTTPS with auto-generated self-signed cert")
 	flag.Parse()
 
 	// Open RFID reader
@@ -51,6 +95,14 @@ func main() {
 
 	// Start HTTP server
 	server := NewHttpServer(*listen, reader, *debug)
+
+	if *tlsMode {
+		cert, key, err := genSelfSignedCert()
+		if err != nil {
+			log.Fatalf("TLS cert: %v", err)
+		}
+		server.SetTLS(cert, key)
+	}
 	go func() {
 		log.Printf("Starting HTTP server on %s", *listen)
 		if err := server.Run(); err != nil {
@@ -58,15 +110,7 @@ func main() {
 		}
 	}()
 
-	// Background scan loop that updates the tag cache
-	go func() {
-		for {
-			if err := server.BackgroundScan(); err != nil {
-				log.Printf("Scan error: %v", err)
-			}
-			time.Sleep(500 * time.Millisecond)
-		}
-	}()
+	// No background scan — RFID reader is polled only on HTTP request.
 
 	// Wait for signal
 	sig := make(chan os.Signal, 1)

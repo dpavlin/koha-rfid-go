@@ -18,6 +18,8 @@ type HttpServer struct {
 	rfidOps  rfidops.RfidOps
 	debug    bool
 	tagCache map[string]*rfidops.TagInfo
+	tlsCert  string // path to TLS cert (if empty, serve HTTP)
+	tlsKey   string // path to TLS key
 }
 
 func NewHttpServer(listen string, ops rfidops.RfidOps, debug bool) *HttpServer {
@@ -27,6 +29,20 @@ func NewHttpServer(listen string, ops rfidops.RfidOps, debug bool) *HttpServer {
 		debug:    debug,
 		tagCache: make(map[string]*rfidops.TagInfo),
 	}
+}
+
+// SetTLS enables HTTPS with the given cert/key files.
+func (s *HttpServer) SetTLS(cert, key string) {
+	s.tlsCert = cert
+	s.tlsKey = key
+}
+
+// corsHeader adds permissive CORS headers so browsers can fetch from any origin
+// (e.g., the Koha HTTPS page fetching from localhost).
+func corsHeader(w http.ResponseWriter) {
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+	w.Header().Set("Access-Control-Allow-Headers", "*")
 }
 
 func (s *HttpServer) Run() error {
@@ -45,8 +61,25 @@ func (s *HttpServer) Run() error {
 	if addr == "" {
 		addr = "localhost:9000"
 	}
+
+	// Wrap mux with CORS headers for every request
+	var handler http.Handler = mux
+	handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		corsHeader(w)
+		if r.Method == "OPTIONS" {
+			w.WriteHeader(204)
+			return
+		}
+		mux.ServeHTTP(w, r)
+	})
+
+	if s.tlsCert != "" && s.tlsKey != "" {
+		log.Printf("HTTPS server listening on %s", addr)
+		return http.ListenAndServeTLS(addr, s.tlsCert, s.tlsKey, handler)
+	}
+
 	log.Printf("HTTP server listening on %s", addr)
-	return http.ListenAndServe(addr, mux)
+	return http.ListenAndServe(addr, handler)
 }
 
 func (s *HttpServer) handleIndex(w http.ResponseWriter, r *http.Request) {
