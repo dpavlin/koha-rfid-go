@@ -13,9 +13,12 @@
  * You will have to inject remote javascript in Koha intranetuserjs using:
  *
  * // inject JavaScript RFID support
- * $.getScript('http://localhost:9000/examples/koha-rfid.js');
+ * $.getScript('https://localhost:9000/examples/koha-rfid.js');
  *
  */
+
+var rfid_submitted = false;
+var rfid_timeout = null;
 
 function barcode_on_screen(barcode) {
 	var found = 0;
@@ -31,8 +34,6 @@ function rfid_secure(barcode,sid,val) {
 		$.getJSON( 'https://localhost:9000/secure.js?' + sid + '=' + val + ';callback=?' )
 }
 
-var rfid_reset_field = false;
-
 function rfid_scan(data,textStatus) {
 
 	var span = $('span#rfid');
@@ -45,50 +46,48 @@ function rfid_scan(data,textStatus) {
 
 	span = $('span#rfid');
 
-
 	if ( data.tags ) {
 		if ( data.tags.length === 1 ) {
 			var t = data.tags[0];
-			if ( 1 ) { // force update of security
 
-				var url = document.location.toString();
-				var circulation = url.substr(-14,14) == 'circulation.pl';
-				var returns = url.substr(-10,10) == 'returns.pl';
+			var url = document.location.toString();
+			var circulation = url.substr(-14,14) == 'circulation.pl';
+			var returns = url.substr(-10,10) == 'returns.pl';
 
-				if ( t.content.length == 0 ) { // empty tag
+			if ( t.content.length == 0 ) { // empty tag
 
-					span.text( t.sid + ' empty' ).css('color', 'red' );
+				span.text( t.sid + ' empty' ).css('color', 'red' );
 
-				} else if ( t.content.substr(0,3) == '130' ) { // books
+			} else if ( t.content.substr(0,3) == '130' ) { // books
 
-					if ( circulation )
-						 rfid_secure( t.content, t.sid, 'D7' );
-					if ( returns )
-						 rfid_secure( t.content, t.sid, 'DA' );
+				if ( circulation )
+					 rfid_secure( t.content, t.sid, 'D7' );
+				if ( returns )
+					 rfid_secure( t.content, t.sid, 'DA' );
 
-					var color = 'blue';
-					if ( t.security.toUpperCase() == 'DA' ) color = 'red';
-					if ( t.security.toUpperCase() == 'D7' ) color = 'green';
-					span.text( t.content ).css('color', color);
+				var color = 'blue';
+				if ( t.security.toUpperCase() == 'DA' ) color = 'red';
+				if ( t.security.toUpperCase() == 'D7' ) color = 'green';
+				span.text( t.content ).css('color', color);
 
-					if ( ! barcode_on_screen( t.content ) ) {
-						rfid_reset_field = 'barcode';
-						var i = $('input[name=barcode]:last');
-						if ( i.val() != t.content ) 
-							i.val( t.content )
+				if ( ! rfid_submitted && ! barcode_on_screen( t.content ) ) {
+					rfid_submitted = true;
+					var i = $('input[name=barcode]:last');
+					if ( i.val() != t.content ) 
+						i.val( t.content )
 							.closest('form').submit();
-					}
+				}
 
-				} else {
-					span.text( t.content ).css('color', 'blue' );
+			} else {
+				span.text( t.content ).css('color', 'blue' );
 
-					if ( url.substr(-14,14) != 'circulation.pl' || $('form[name=mainform]').size() == 0 ) {
-						rfid_reset_field = 'findborrower';
-						$('input[name=findborrower]').val( t.content )
-							.parent().submit();
-					}
+				if ( ! rfid_submitted && ( url.substr(-14,14) != 'circulation.pl' || $('form[name=mainform]').size() == 0 ) ) {
+					rfid_submitted = true;
+					$('input[name=findborrower]').val( t.content )
+						.parent().submit();
 				}
 			}
+
 		} else {
 			var error = data.tags.length + ' tags near reader: ';
 			$.each( data.tags, function(i,tag) { error += tag.content + ' '; } );
@@ -97,17 +96,17 @@ function rfid_scan(data,textStatus) {
 
 	} else {
 		span.text( 'no tags in range' ).css('color','gray');
-		if ( rfid_reset_field ) {
-			$('input[name='+rfid_reset_field+']').val( '' );
-			rfid_reset_field = false;
-		}
 	}
 
-	window.setTimeout( function() {
-		$.getJSON("https://localhost:9000/scan?callback=?", rfid_scan);
-	}, 1000 ); // 1000ms
+	if ( ! rfid_submitted ) {
+		rfid_timeout = window.setTimeout( function() {
+			$.getJSON("https://localhost:9000/scan?callback=?", rfid_scan);
+		}, 1000 );
+	}
 }
 
 $(document).ready( function() {
+	rfid_submitted = false;
+	rfid_timeout = null;
 	$.getJSON("https://localhost:9000/scan?callback=?", rfid_scan);
 });
