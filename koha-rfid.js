@@ -60,9 +60,10 @@ function rfid_poll() {
 				span = $('div#login').prepend('<span id=rfid>RFID reader found</span>');
 			span = $('span#rfid');
 		}
-		span.text(
+		span.html(
 			'RFID server not reachable (TLS error?) — ' +
-			'open https://localhost:9000 in a browser tab and accept self-signed certificate'
+			'<a href="https://localhost:9000" target="_blank" style="color:orange;text-decoration:underline">' +
+			'open https://localhost:9000</a> in a new tab and accept self-signed certificate'
 		).css('color', 'orange');
 	}, 5000);
 
@@ -80,9 +81,10 @@ function rfid_poll() {
 				span = $('div#login').prepend('<span id=rfid>RFID reader found</span>');
 			span = $('span#rfid');
 		}
-		span.text(
+		span.html(
 			'RFID server error: ' + textStatus + ' — ' +
-			'open https://localhost:9000 in a browser tab and accept self-signed certificate'
+			'<a href="https://localhost:9000" target="_blank" style="color:orange;text-decoration:underline">' +
+			'open https://localhost:9000</a> in a new tab and accept self-signed certificate'
 		).css('color', 'orange');
 	});
 }
@@ -98,6 +100,10 @@ function rfid_scan(data,textStatus) {
 		span = $('div#login').prepend('<span id=rfid>RFID reader found</span>');
 
 	span = $('span#rfid');
+
+	// detect active tab: checkin tab has aria-hidden="false", checkout tab has aria-hidden="true"
+	var checkin_active = $('#checkin_search').attr('aria-hidden') == 'false';
+	var checkout_active = $('#checkout_search').attr('aria-hidden') == 'false';
 
 	if ( data.tags ) {
 		if ( data.tags.length === 1 ) {
@@ -125,15 +131,36 @@ function rfid_scan(data,textStatus) {
 				if ( sec == 'D7' ) color = 'green';
 				span.text( t.content + ' (' + sec + ')' ).css('color', color);
 
-				if ( ! rfid_submitted && ! barcode_on_screen( t.content ) && afi_valid_for(sec, circulation ? 'circulation' : 'returns') ) {
-					var last = sessionStorage.getItem('rfid_last_barcode');
-					if ( t.content != last ) {
-						sessionStorage.setItem('rfid_last_barcode', t.content);
-						rfid_submitted = true;
-						var i = $('input[name=barcode]:last');
-						if ( i.val() != t.content ) 
-							i.val( t.content )
-								.closest('form').submit();
+				// determine which form to fill based on active tab, fall back to URL
+				var is_checkout = checkout_active || (!checkin_active && circulation);
+				var is_checkin = checkin_active || returns;
+
+				if ( ! rfid_submitted && ! barcode_on_screen( t.content ) ) {
+
+					if ( is_checkin && afi_valid_for(sec, 'returns') ) {
+						// checkin form: use #ret_barcode
+						var last = sessionStorage.getItem('rfid_last_barcode');
+						if ( t.content != last ) {
+							sessionStorage.setItem('rfid_last_barcode', t.content);
+							rfid_submitted = true;
+							var i = $('#ret_barcode');
+							if ( i.val() != t.content ) {
+								i.val( t.content );
+								i.closest('form').submit();
+							}
+						}
+					} else if ( is_checkout && afi_valid_for(sec, 'circulation') ) {
+						// checkout form: use input[name=barcode]:last
+						var last = sessionStorage.getItem('rfid_last_barcode');
+						if ( t.content != last ) {
+							sessionStorage.setItem('rfid_last_barcode', t.content);
+							rfid_submitted = true;
+							var i = $('input[name=barcode]:last');
+							if ( i.val() != t.content ) {
+								i.val( t.content );
+								i.closest('form').submit();
+							}
+						}
 					}
 				}
 
