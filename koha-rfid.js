@@ -71,20 +71,28 @@ function rfid_scan(data,textStatus) {
 				span.text( t.content ).css('color', color);
 
 				if ( ! rfid_submitted && ! barcode_on_screen( t.content ) ) {
-					rfid_submitted = true;
-					var i = $('input[name=barcode]:last');
-					if ( i.val() != t.content ) 
-						i.val( t.content )
-							.closest('form').submit();
+					var last = sessionStorage.getItem('rfid_last_barcode');
+					if ( t.content != last ) {
+						sessionStorage.setItem('rfid_last_barcode', t.content);
+						rfid_submitted = true;
+						var i = $('input[name=barcode]:last');
+						if ( i.val() != t.content ) 
+							i.val( t.content )
+								.closest('form').submit();
+					}
 				}
 
 			} else {
 				span.text( t.content ).css('color', 'blue' );
 
 				if ( ! rfid_submitted && ( url.substr(-14,14) != 'circulation.pl' || $('form[name=mainform]').size() == 0 ) ) {
-					rfid_submitted = true;
-					$('input[name=findborrower]').val( t.content )
-						.parent().submit();
+					var last = sessionStorage.getItem('rfid_last_barcode');
+					if ( t.content != last ) {
+						sessionStorage.setItem('rfid_last_barcode', t.content);
+						rfid_submitted = true;
+						$('input[name=findborrower]').val( t.content )
+							.parent().submit();
+					}
 				}
 			}
 
