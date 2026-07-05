@@ -252,6 +252,7 @@ function rfid_scan(data) {
 				// Per-tag processed check: skip form fill if this barcode was recently handled
 				if ( rfid_was_processed(t.content, sec) ) {
 					body.text( t.content + ' (processed)' ).css('color', '#888');
+					rfid_timeout = window.setTimeout( rfid_poll, 1000 );
 					return;
 				}
 
@@ -269,6 +270,7 @@ function rfid_scan(data) {
 							}
 						}
 					}
+					rfid_timeout = window.setTimeout( rfid_poll, 1000 );
 					return;
 				}
 
@@ -323,6 +325,8 @@ function rfid_scan(data) {
 			var error = data.tags.length + ' tags near reader: ';
 			$.each( data.tags, function(i,tag) { error += tag.content + ' '; } );
 			body.text( error ).css( 'color', 'red' );
+			rfid_submitted = false;
+			sessionStorage.removeItem('rfid_processed');
 		}
 
 	} else {
@@ -330,11 +334,11 @@ function rfid_scan(data) {
 		body.text( 'no tags in range' ).css('color','gray');
 		sessionStorage.removeItem('rfid_last_barcode');
 		sessionStorage.removeItem('rfid_processed');
+		rfid_submitted = false;
 	}
 
-	if ( ! rfid_submitted ) {
-		rfid_timeout = window.setTimeout( rfid_poll, 1000 );
-	}
+	// Always keep polling — rfid_submitted only prevents form re-submission
+	rfid_timeout = window.setTimeout( rfid_poll, 1000 );
 }
 
 $(document).ready( function() {
