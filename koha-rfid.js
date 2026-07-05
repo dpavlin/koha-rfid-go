@@ -198,8 +198,8 @@ function rfid_scan(data) {
 			var t = data.tags[0];
 
 			var url = document.location.toString();
-			var circulation = url.substr(-14,14) == 'circulation.pl';
-			var returns = url.substr(-10,10) == 'returns.pl';
+			var circulation = url.indexOf('circulation.pl') >= 0;
+			var returns = url.indexOf('returns.pl') >= 0;
 
 			if ( t.content.length == 0 ) { // empty tag
 
@@ -254,7 +254,7 @@ function rfid_scan(data) {
 			} else {
 				body.text( t.content ).css('color', 'blue' );
 
-				if ( ! rfid_submitted && ( url.substr(-14,14) != 'circulation.pl' || $('form[name=mainform]').size() == 0 ) ) {
+				if ( ! rfid_submitted && ( url.indexOf('circulation.pl') < 0 || $('form[name=mainform]').size() == 0 ) ) {
 					var last = sessionStorage.getItem('rfid_last_barcode');
 					if ( t.content != last ) {
 						sessionStorage.setItem('rfid_last_barcode', t.content);
