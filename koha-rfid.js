@@ -17,7 +17,6 @@
  *
  */
 
-var rfid_submitted = false;
 var rfid_timeout = null;
 var rfid_poll_pending = false;
 
@@ -83,7 +82,6 @@ function rfid_mark_processed(barcode, security) {
 		security: security,
 		time: Date.now()
 	}));
-	rfid_submitted = true;
 }
 
 // Create floating RFID status popup (called once at page load)
@@ -258,7 +256,7 @@ function rfid_scan(data) {
 
 				// Renew page: simple form with #barcode, no tabs
 				if ( renew && afi_valid_for(sec, 'renew') ) {
-					if ( ! rfid_submitted && ! barcode_on_screen( t.content ) ) {
+					if ( ! barcode_on_screen( t.content ) ) {
 						var last = sessionStorage.getItem('rfid_last_barcode');
 						if ( t.content != last ) {
 							sessionStorage.setItem('rfid_last_barcode', t.content);
@@ -278,7 +276,7 @@ function rfid_scan(data) {
 				var is_checkout = checkout_active || (!checkin_active && circulation);
 				var is_checkin = checkin_active || returns;
 
-				if ( ! rfid_submitted && ! barcode_on_screen( t.content ) ) {
+				if ( ! barcode_on_screen( t.content ) ) {
 
 					if ( is_checkin && afi_valid_for(sec, 'returns') ) {
 						// checkin form: use #ret_barcode
@@ -310,11 +308,10 @@ function rfid_scan(data) {
 			} else {
 				body.text( t.content ).css('color', 'blue' );
 
-				if ( ! rfid_submitted && ( url.indexOf('circulation.pl') < 0 || $('form[name=mainform]').size() == 0 ) ) {
+				if ( url.indexOf('circulation.pl') < 0 || $('form[name=mainform]').size() == 0 ) {
 					var last = sessionStorage.getItem('rfid_last_barcode');
 					if ( t.content != last ) {
 						sessionStorage.setItem('rfid_last_barcode', t.content);
-						rfid_submitted = true;
 						$('input[name=findborrower]').val( t.content )
 							.parent().submit();
 					}
@@ -325,7 +322,6 @@ function rfid_scan(data) {
 			var error = data.tags.length + ' tags near reader: ';
 			$.each( data.tags, function(i,tag) { error += tag.content + ' '; } );
 			body.text( error ).css( 'color', 'red' );
-			rfid_submitted = false;
 			sessionStorage.removeItem('rfid_processed');
 		}
 
@@ -334,15 +330,13 @@ function rfid_scan(data) {
 		body.text( 'no tags in range' ).css('color','gray');
 		sessionStorage.removeItem('rfid_last_barcode');
 		sessionStorage.removeItem('rfid_processed');
-		rfid_submitted = false;
 	}
 
-	// Always keep polling — rfid_submitted only prevents form re-submission
+	// Always keep polling
 	rfid_timeout = window.setTimeout( rfid_poll, 1000 );
 }
 
 $(document).ready( function() {
-	rfid_submitted = false;
 	rfid_timeout = null;
 	rfid_poll();
 });
