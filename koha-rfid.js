@@ -54,6 +54,7 @@ function afi_valid_for(security, page) {
 	var s = security.toUpperCase();
 	if (page == 'circulation') return s == 'DA';
 	if (page == 'returns') return s == 'D7';
+	if (page == 'renew') return s == 'D7';
 	return false;
 }
 
@@ -228,6 +229,7 @@ function rfid_scan(data) {
 			var url = document.location.toString();
 			var circulation = url.indexOf('circulation.pl') >= 0;
 			var returns = url.indexOf('returns.pl') >= 0;
+			var renew = url.indexOf('renew.pl') >= 0;
 
 			if ( t.content.length == 0 ) { // empty tag
 
@@ -241,6 +243,7 @@ function rfid_scan(data) {
 					 rfid_secure( t.content, t.sid, 'D7' );
 				if ( returns )
 					 rfid_secure( t.content, t.sid, 'DA' );
+				// renew: no AFI write needed (book stays on loan)
 
 				var label = sec == 'DA' ? 'checked in' : sec == 'D7' ? 'on loan' : 'unknown';
 				var color = sec == 'DA' ? 'red' : sec == 'D7' ? 'green' : 'blue';
@@ -249,6 +252,23 @@ function rfid_scan(data) {
 				// Per-tag processed check: skip form fill if this barcode was recently handled
 				if ( rfid_was_processed(t.content, sec) ) {
 					body.text( t.content + ' (processed)' ).css('color', '#888');
+					return;
+				}
+
+				// Renew page: simple form with #barcode, no tabs
+				if ( renew && afi_valid_for(sec, 'renew') ) {
+					if ( ! rfid_submitted && ! barcode_on_screen( t.content ) ) {
+						var last = sessionStorage.getItem('rfid_last_barcode');
+						if ( t.content != last ) {
+							sessionStorage.setItem('rfid_last_barcode', t.content);
+							rfid_mark_processed(t.content, sec);
+							var i = $('#barcode');
+							if ( i.val() != t.content ) {
+								i.val( t.content );
+								i.closest('form').submit();
+							}
+						}
+					}
 					return;
 				}
 
