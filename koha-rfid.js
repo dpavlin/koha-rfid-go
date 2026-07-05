@@ -20,6 +20,7 @@
 var rfid_submitted = false;
 var rfid_timeout = null;
 var rfid_poll_pending = false;
+var rfid_cooldown = false;
 
 function barcode_on_screen(barcode) {
 	var found = 0;
@@ -55,6 +56,36 @@ function afi_valid_for(security, page) {
 	if (page == 'circulation') return s == 'DA';
 	if (page == 'returns') return s == 'D7';
 	return false;
+}
+
+// Check if this barcode+security pair was recently processed (cooldown)
+function rfid_was_processed(barcode, security) {
+	var stored = sessionStorage.getItem('rfid_processed');
+	if ( ! stored ) return false;
+	try {
+		var p = JSON.parse(stored);
+		// Match if same barcode (regardless of AFI change — item was just handled)
+		if ( p.barcode == barcode ) {
+			// If security changed (DA→D7 or D7→DA) it was definitely processed
+			if ( p.security != security ) return true;
+			// Same barcode + same security: check timestamp
+			if ( p.time && (Date.now() - p.time) < 30000 ) return true;
+		}
+	} catch(e) {}
+	return false;
+}
+
+// Mark a tag as processed (stores barcode + AFI + timestamp in sessionStorage)
+function rfid_mark_processed(barcode, security) {
+	sessionStorage.setItem('rfid_processed', JSON.stringify({
+		barcode: barcode,
+		security: security,
+		time: Date.now()
+	}));
+	rfid_submitted = true;
+	rfid_cooldown = true;
+	// Stop polling for 10 seconds to allow Koha to process
+	setTimeout(function() { rfid_cooldown = false; }, 10000);
 }
 
 // Create floating RFID status popup (called once at page load)
@@ -144,6 +175,10 @@ function rfid_check_server() {
 
 function rfid_poll() {
 	if ( rfid_poll_pending ) return;
+	if ( rfid_cooldown ) {
+		rfid_timeout = window.setTimeout( rfid_poll, 2000 );
+		return;
+	}
 	rfid_poll_pending = true;
 
 	var body = $('#rfid-popup-body');
@@ -218,6 +253,12 @@ function rfid_scan(data) {
 				var color = sec == 'DA' ? 'red' : sec == 'D7' ? 'green' : 'blue';
 				body.text( t.content + ' (' + label + ')' ).css('color', color);
 
+				// Skip if this tag was recently processed (cooldown)
+				if ( rfid_was_processed(t.content, sec) ) {
+					body.text( t.content + ' (processed)' ).css('color', '#888');
+					return;
+				}
+
 				// determine which form to fill based on active tab, fall back to URL
 				var is_checkout = checkout_active || (!checkin_active && circulation);
 				var is_checkin = checkin_active || returns;
@@ -229,7 +270,7 @@ function rfid_scan(data) {
 						var last = sessionStorage.getItem('rfid_last_barcode');
 						if ( t.content != last ) {
 							sessionStorage.setItem('rfid_last_barcode', t.content);
-							rfid_submitted = true;
+							rfid_mark_processed(t.content, sec);
 							var i = $('#ret_barcode');
 							if ( i.val() != t.content ) {
 								i.val( t.content );
@@ -241,7 +282,7 @@ function rfid_scan(data) {
 						var last = sessionStorage.getItem('rfid_last_barcode');
 						if ( t.content != last ) {
 							sessionStorage.setItem('rfid_last_barcode', t.content);
-							rfid_submitted = true;
+							rfid_mark_processed(t.content, sec);
 							var i = $('input[name=barcode]:last');
 							if ( i.val() != t.content ) {
 								i.val( t.content );
