@@ -21,7 +21,7 @@ var RFID_VERSION = '1.0';  // version number for tracking
 var rfid_timeout = null;
 var rfid_poll_pending = false;
 var rfid_events = [];  // in-memory cache of recent events
-var rfid_show_events = false;  // toggle for event log in popup
+var rfid_show_events = localStorage.getItem('rfid_show_events') == 'true';  // checkbox state
 var rfid_page_id = null;  // unique page load identifier (set on ready)
 
 // ---------------------------------------------------------------------------
@@ -88,22 +88,37 @@ function rfid_event_format(e) {
 	return h + ':' + m + ':' + s + ' ' + e.barcode + ' ' + e.action + (e.detail ? ': ' + e.detail : '');
 }
 
-function rfid_event_toggle() {
-	rfid_show_events = !rfid_show_events;
+function rfid_event_update() {
+	rfid_show_events = $('#rfid-events-check').prop('checked');
+	localStorage.setItem('rfid_show_events', rfid_show_events ? 'true' : 'false');
 	var body = $('#rfid-popup-body');
+	var log = $('#rfid-events-log');
 	if ( rfid_show_events ) {
-		var html = '<div style="font-size:11px; line-height:1.4; max-height:300px; overflow-y:auto; border-top:1px solid #555; padding-top:4px">';
-		if ( rfid_events.length == 0 ) {
-			html += '<span style="color:#888">(no recent events)</span>';
-		} else {
-			for ( var i = rfid_events.length - 1; i >= 0; i-- ) {
-				html += '<div>' + rfid_event_format(rfid_events[i]) + '</div>';
+		if ( log.length == 0 ) {
+			var html = '<div id="rfid-events-log" style="font-size:11px; line-height:1.4; max-height:200px; overflow-y:auto; border-top:1px solid #555; padding-top:4px; margin-top:4px">';
+			if ( rfid_events.length == 0 ) {
+				html += '<span style="color:#888">(no recent events)</span>';
+			} else {
+				for ( var i = rfid_events.length - 1; i >= 0; i-- ) {
+					html += '<div>' + rfid_event_format(rfid_events[i]) + '</div>';
+				}
 			}
+			html += '</div>';
+			var el = body[0];
+			if ( el ) el.insertAdjacentHTML('afterend', html);
+		} else {
+			var html = '';
+			if ( rfid_events.length == 0 ) {
+				html = '<span style="color:#888">(no recent events)</span>';
+			} else {
+				for ( var i = rfid_events.length - 1; i >= 0; i-- ) {
+					html += '<div>' + rfid_event_format(rfid_events[i]) + '</div>';
+				}
+			}
+			log.html(html);
 		}
-		html += '</div>';
-		body.html(html);
 	} else {
-		rfid_show_popup_body();
+		log.remove();
 	}
 }
 
@@ -201,11 +216,13 @@ function rfid_show_popup_body() {
 	var text = body.data('last-text') || '—';
 	var color = body.data('last-color') || 'gray';
 	body.text(text).css('color', color);
+	rfid_event_update();
 }
 
 function rfid_create_popup() {
 	var saved = localStorage.getItem('rfid_popup_pos');
 	var pos = saved ? JSON.parse(saved) : { top: 10, right: 10 };
+	var checked = rfid_show_events ? ' checked' : '';
 	var html =
 		'<div id="rfid-popup" style="' +
 			'position:fixed; z-index:9999;' +
@@ -218,7 +235,9 @@ function rfid_create_popup() {
 			'<div id="rfid-popup-header" style="font-weight:bold; margin-bottom:4px;">RFID reader v' + RFID_VERSION + '</div>' +
 			'<div id="rfid-popup-body">—</div>' +
 			'<div style="font-size:10px; margin-top:4px; opacity:0.6">' +
-				'<a href="#" id="rfid-events-toggle" style="color:#aaa; text-decoration:none">events</a>' +
+				'<label style="color:#aaa; cursor:pointer">' +
+					'<input type="checkbox" id="rfid-events-check"' + checked + '> events' +
+				'</label>' +
 			'</div>' +
 		'</div>';
 
@@ -255,10 +274,8 @@ function rfid_create_popup() {
 		}
 	});
 
-	$('#rfid-events-toggle').on('click', function(e) {
-		e.preventDefault();
-		e.stopPropagation();
-		rfid_event_toggle();
+	$('#rfid-events-check').on('change', function(e) {
+		rfid_event_update();
 	});
 
 	return $('#rfid-popup-body');
@@ -269,6 +286,7 @@ function rfid_show_error(msg, hint) {
 	if ( body.length == 0 ) body = rfid_create_popup();
 	var link = ' — <a href="https://localhost:9000" target="_blank" style="color:orange;text-decoration:underline">open https://localhost:9000</a> in a new tab and accept self-signed certificate';
 	body.html(msg + (hint ? link : '')).css('color', 'orange');
+	rfid_event_update();
 }
 
 function rfid_fetch(url, timeout_ms) {
@@ -494,6 +512,7 @@ function rfid_scan(data) {
 		body.text( 'no tags in range' ).css('color','gray');
 	}
 
+	rfid_event_update();
 	rfid_timeout = window.setTimeout( rfid_poll, 1000 );
 }
 
