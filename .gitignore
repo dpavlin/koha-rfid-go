@@ -13,3 +13,4 @@ build/
 # OS temp files
 *~
 *.swp
+rfid-localhost.*
