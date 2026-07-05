@@ -20,7 +20,6 @@
 var rfid_submitted = false;
 var rfid_timeout = null;
 var rfid_poll_pending = false;
-var rfid_cooldown = false;
 var rfid_stale_count = 0;
 
 function barcode_on_screen(barcode) {
@@ -59,17 +58,16 @@ function afi_valid_for(security, page) {
 	return false;
 }
 
-// Check if this barcode+security pair was recently processed (cooldown).
-// Returns true if processed, false if stale (repeated too many times).
+// Per-tag processed check. Returns true if this barcode was recently processed.
+// After 4 stale repeats of the same tag, it's treated as gone so new tags work.
 function rfid_was_processed(barcode, security) {
 	var stored = sessionStorage.getItem('rfid_processed');
 	if ( ! stored ) return false;
 	try {
 		var p = JSON.parse(stored);
 		if ( p.barcode == barcode ) {
-			// Same barcode seen again after processing
 			rfid_stale_count++;
-			// If this is the 4th+ repeat, treat tag as gone
+			// 4th+ repeat — treat tag as gone, allow new tag
 			if ( rfid_stale_count >= 4 ) {
 				sessionStorage.removeItem('rfid_processed');
 				rfid_stale_count = 0;
@@ -84,7 +82,8 @@ function rfid_was_processed(barcode, security) {
 	return false;
 }
 
-// Mark a tag as processed (stores barcode + AFI + timestamp in sessionStorage)
+// Mark a tag as processed (stores barcode + AFI + timestamp in sessionStorage).
+// Does NOT stop scanning — new tags are detected immediately.
 function rfid_mark_processed(barcode, security) {
 	sessionStorage.setItem('rfid_processed', JSON.stringify({
 		barcode: barcode,
@@ -92,10 +91,7 @@ function rfid_mark_processed(barcode, security) {
 		time: Date.now()
 	}));
 	rfid_submitted = true;
-	rfid_cooldown = true;
 	rfid_stale_count = 0;
-	// Stop polling for 10 seconds to allow Koha to process
-	setTimeout(function() { rfid_cooldown = false; }, 10000);
 }
 
 // Create floating RFID status popup (called once at page load)
@@ -185,10 +181,6 @@ function rfid_check_server() {
 
 function rfid_poll() {
 	if ( rfid_poll_pending ) return;
-	if ( rfid_cooldown ) {
-		rfid_timeout = window.setTimeout( rfid_poll, 2000 );
-		return;
-	}
 	rfid_poll_pending = true;
 
 	var body = $('#rfid-popup-body');
@@ -263,13 +255,13 @@ function rfid_scan(data) {
 				var color = sec == 'DA' ? 'red' : sec == 'D7' ? 'green' : 'blue';
 				body.text( t.content + ' (' + label + ')' ).css('color', color);
 
-				// Skip if this tag was recently processed (cooldown).
-				// After 3 stale repeats the tag is treated as gone.
+				// Per-tag processed check: if this barcode was recently handled,
+				// skip form fill. After 4 stale repeats the tag is treated as gone.
 				if ( rfid_was_processed(t.content, sec) ) {
 					body.text( t.content + ' (processed)' ).css('color', '#888');
 					return;
 				}
-				// Reset stale counter on new tag
+				// New or cleared tag — reset stale counter
 				rfid_stale_count = 0;
 
 				// determine which form to fill based on active tab, fall back to URL
@@ -326,11 +318,10 @@ function rfid_scan(data) {
 		}
 
 	} else {
-		// No tags — clear processed state and resume polling immediately
+		// No tags — clear processed state so new tags work immediately
 		body.text( 'no tags in range' ).css('color','gray');
 		sessionStorage.removeItem('rfid_last_barcode');
 		sessionStorage.removeItem('rfid_processed');
-		rfid_cooldown = false;
 		rfid_stale_count = 0;
 	}
 
