@@ -20,7 +20,6 @@
 var rfid_submitted = false;
 var rfid_timeout = null;
 var rfid_poll_pending = false;
-var rfid_stale_count = 0;
 
 function barcode_on_screen(barcode) {
 	var found = 0;
@@ -58,21 +57,14 @@ function afi_valid_for(security, page) {
 	return false;
 }
 
-// Per-tag processed check. Returns true if this barcode was recently processed.
-// After 4 stale repeats of the same tag, it's treated as gone so new tags work.
+// Per-tag processed check. Returns true if this barcode was recently processed
+// (same barcode regardless of AFI change, within 30s of the first detection).
 function rfid_was_processed(barcode, security) {
 	var stored = sessionStorage.getItem('rfid_processed');
 	if ( ! stored ) return false;
 	try {
 		var p = JSON.parse(stored);
 		if ( p.barcode == barcode ) {
-			rfid_stale_count++;
-			// 4th+ repeat — treat tag as gone, allow new tag
-			if ( rfid_stale_count >= 4 ) {
-				sessionStorage.removeItem('rfid_processed');
-				rfid_stale_count = 0;
-				return false;
-			}
 			// Security changed (DA→D7 or D7→DA) — definitely processed
 			if ( p.security != security ) return true;
 			// Same barcode + same security within 30s — still processed
@@ -91,7 +83,6 @@ function rfid_mark_processed(barcode, security) {
 		time: Date.now()
 	}));
 	rfid_submitted = true;
-	rfid_stale_count = 0;
 }
 
 // Create floating RFID status popup (called once at page load)
@@ -255,14 +246,11 @@ function rfid_scan(data) {
 				var color = sec == 'DA' ? 'red' : sec == 'D7' ? 'green' : 'blue';
 				body.text( t.content + ' (' + label + ')' ).css('color', color);
 
-				// Per-tag processed check: if this barcode was recently handled,
-				// skip form fill. After 4 stale repeats the tag is treated as gone.
+				// Per-tag processed check: skip form fill if this barcode was recently handled
 				if ( rfid_was_processed(t.content, sec) ) {
 					body.text( t.content + ' (processed)' ).css('color', '#888');
 					return;
 				}
-				// New or cleared tag — reset stale counter
-				rfid_stale_count = 0;
 
 				// determine which form to fill based on active tab, fall back to URL
 				var is_checkout = checkout_active || (!checkin_active && circulation);
@@ -322,7 +310,6 @@ function rfid_scan(data) {
 		body.text( 'no tags in range' ).css('color','gray');
 		sessionStorage.removeItem('rfid_last_barcode');
 		sessionStorage.removeItem('rfid_processed');
-		rfid_stale_count = 0;
 	}
 
 	if ( ! rfid_submitted ) {
