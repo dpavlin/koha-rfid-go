@@ -22,6 +22,19 @@ var rfid_timeout = null;
 var rfid_poll_pending = false;
 var rfid_events = [];  // in-memory cache of recent events
 var rfid_show_events = localStorage.getItem('rfid_show_events') == 'true';  // checkbox state
+
+// ---------------------------------------------------------------------------
+// Read/write helpers for localStorage JSON objects
+// ---------------------------------------------------------------------------
+
+function rfid_storage_get(key, def) {
+	var v = localStorage.getItem(key);
+	return v ? JSON.parse(v) : (def || {});
+}
+function rfid_storage_set(key, obj) {
+	localStorage.setItem(key, JSON.stringify(obj));
+}
+
 // ---------------------------------------------------------------------------
 // Audit log — append-only event store with daily cleanup
 //
@@ -190,12 +203,10 @@ function afi_color(sec) {
 // ---------------------------------------------------------------------------
 
 function rfid_secure(barcode, sid, target) {
-	var url = 'https://localhost:9000/secure/' + sid + '/' + target;
+	var url = 'https://localhost:9000/secure.js?' + sid + '=' + target + '&callback=jsonp';
 	rfid_fetch(url, 15000).then(function(r) {
-		if ( r.ok ) {
+		if ( r.status == 200 ) {
 			rfid_event_push(barcode, 'afi-write', target);
-			var body = $('#rfid-popup-body');
-			body.text( barcode + ' (' + afi_label(target) + ')' ).css('color', afi_color(target));
 		} else {
 			rfid_event_push(barcode, 'afi-write', 'error ' + r.status);
 		}
@@ -318,7 +329,7 @@ function rfid_poll() {
 		var timeout = window.setTimeout(function() {
 			rfid_poll_pending = false;
 			rfid_show_error('RFID server not responding (reader timeout)', true);
-		}, 5000);
+		}, 20000);
 
 		rfid_fetch('https://localhost:9000/scan/', 15000).then(function(r) {
 			window.clearTimeout(timeout);

@@ -14,3 +14,4 @@ build/
 *~
 *.swp
 rfid-localhost.*
+koha-rfid-go
