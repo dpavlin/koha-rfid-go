@@ -182,7 +182,7 @@ function rfid_scan(data) {
 	var checkin_active = $('#checkin_search').attr('aria-hidden') == 'false';
 	var checkout_active = $('#checkout_search').attr('aria-hidden') == 'false';
 
-	if ( data.tags ) {
+	if ( data.tags && data.tags.length > 0 ) {
 		if ( data.tags.length === 1 ) {
 			var t = data.tags[0];
 
