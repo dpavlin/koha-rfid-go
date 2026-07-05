@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"time"
 
 	"koha-rfid/internal/rfidops"
 )
@@ -115,7 +116,20 @@ func writeJSONP(w http.ResponseWriter, callback string, body []byte) {
 func (s *HttpServer) handleScan(w http.ResponseWriter, r *http.Request) {
 	callback := r.FormValue("callback")
 
-	result, err := rfidops.Scan(s.rfidOps)
+	// Retry scan on CRC/communication errors
+	var result *rfidops.ScanResult
+	var err error
+	for i := 0; i < 3; i++ {
+		result, err = rfidops.Scan(s.rfidOps)
+		if err == nil {
+			break
+		}
+		if s.debug {
+			log.Printf("scan retry %d/3: %v", i+1, err)
+		}
+		// Brief pause before retry to let reader recover
+		time.Sleep(200 * time.Millisecond)
+	}
 	if err != nil {
 		http.Error(w, fmt.Sprintf("RFID error: %v", err), 500)
 		return

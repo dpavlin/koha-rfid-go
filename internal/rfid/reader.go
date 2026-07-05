@@ -162,6 +162,7 @@ func (r *RfidReader) readResponse() ([]byte, error) {
 		if r.debug {
 			log.Printf("CRC mismatch: computed %04x != expected %04x (prefix %02x)", computedCRC, expectedCRC, prefix)
 		}
+		return nil, fmt.Errorf("CRC mismatch: computed %04x != expected %04x", computedCRC, expectedCRC)
 	}
 
 	if r.debug {
@@ -360,7 +361,12 @@ func (r *RfidReader) WriteAfi(tag string, afi byte) error {
 		}
 		resp, err := r.readResponse()
 		if err != nil {
-			return err
+			// CRC errors are retryable — reader may need recovery
+			if r.debug {
+				log.Printf("write AFI read error (retry %d): %v", i+1, err)
+			}
+			time.Sleep(50 * time.Millisecond)
+			continue
 		}
 		if len(resp) >= 2 && resp[0] == 0x09 && resp[1] == 0x00 {
 			return nil

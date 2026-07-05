@@ -30,9 +30,20 @@ function barcode_on_screen(barcode) {
 	return found;
 }
 
-function rfid_secure(barcode,sid,val) {
-	if ( barcode_on_screen(barcode) ) 
-		$.getJSON( 'https://localhost:9000/secure.js?' + sid + '=' + val + ';callback=?' )
+function rfid_secure(barcode, sid, val) {
+	if ( ! barcode_on_screen(barcode) ) return;
+
+	var url = 'https://localhost:9000/secure.js?' + sid + '=' + val;
+	var controller = new AbortController();
+	var timer = setTimeout(function() { controller.abort(); }, 5000);
+	fetch(url, { signal: controller.signal }).then(function(r) {
+		clearTimeout(timer);
+		if ( ! r.ok ) throw new Error('HTTP ' + r.status);
+	}).catch(function(e) {
+		clearTimeout(timer);
+		var body = $('#rfid-popup-body');
+		if ( body.length ) body.html('RFID write error: ' + e.message).css('color', 'orange');
+	});
 }
 
 // AFI values from RFID server (always uppercase hex):
