@@ -48,6 +48,7 @@ func corsHeader(w http.ResponseWriter) {
 func (s *HttpServer) Run() error {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", s.handleIndex)
+	mux.HandleFunc("/ping", s.handlePing)
 	mux.HandleFunc("/scan/", s.handleScan)
 	mux.HandleFunc("/scan/only/", s.handleScan)
 	mux.HandleFunc("/secure", s.handleSecure)
@@ -88,6 +89,12 @@ func (s *HttpServer) handleIndex(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html")
 	w.WriteHeader(200)
 	w.Write([]byte(html))
+}
+
+func (s *HttpServer) handlePing(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	w.Write([]byte(`{"status":"ok"}`))
 }
 
 // ---------------------------------------------------------------------------

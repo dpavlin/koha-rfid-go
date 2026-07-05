@@ -100,6 +100,37 @@ function rfid_create_popup() {
 	return $('#rfid-popup-body');
 }
 
+// Show error in RFID popup with a link to accept TLS certificate
+function rfid_show_error(msg, hint) {
+	var body = $('#rfid-popup-body');
+	if ( body.length == 0 ) body = rfid_create_popup();
+	var link = ' — <a href="https://localhost:9000" target="_blank" style="color:orange;text-decoration:underline">open https://localhost:9000</a> in a new tab and accept self-signed certificate';
+	body.html(msg + (hint ? link : '')).css('color', 'orange');
+}
+
+// Fetch with timeout and detailed error classification
+function rfid_fetch(url, timeout_ms) {
+	var controller = new AbortController();
+	var timer = setTimeout(function() { controller.abort(); }, timeout_ms);
+	return fetch(url, { signal: controller.signal }).then(function(r) {
+		clearTimeout(timer);
+		return r;
+	}).catch(function(e) {
+		clearTimeout(timer);
+		throw e;
+	});
+}
+
+// Check if RFID server is alive (fast ping)
+function rfid_check_server() {
+	return rfid_fetch('https://localhost:9000/ping', 3000).then(function(r) {
+		if ( r.ok ) return true;
+		throw new Error('HTTP ' + r.status);
+	}).catch(function(e) {
+		throw e;
+	});
+}
+
 function rfid_poll() {
 	if ( rfid_poll_pending ) return;
 	rfid_poll_pending = true;
@@ -107,32 +138,42 @@ function rfid_poll() {
 	var body = $('#rfid-popup-body');
 	if ( body.length == 0 ) body = rfid_create_popup();
 
-	// timeout: if no response in 5 seconds, show connection error
-	var poll_timeout = window.setTimeout(function() {
-		rfid_poll_pending = false;
-		body.html(
-			'RFID server not reachable (TLS error?) — ' +
-			'<a href="https://localhost:9000" target="_blank" style="color:orange;text-decoration:underline">' +
-			'open https://localhost:9000</a> in a new tab and accept self-signed certificate'
-		).css('color', 'orange');
-	}, 5000);
+	// Step 1: quick server health check
+	rfid_check_server().then(function() {
+		// Step 2: server is alive, now try scan
+		var timeout = window.setTimeout(function() {
+			rfid_poll_pending = false;
+			rfid_show_error('RFID server not responding (reader timeout)', true);
+		}, 5000);
 
-	$.getJSON("https://localhost:9000/scan?callback=?", function(data, textStatus) {
-		window.clearTimeout(poll_timeout);
+		rfid_fetch('https://localhost:9000/scan/', 5000).then(function(r) {
+			window.clearTimeout(timeout);
+			if ( r.ok ) return r.json();
+			throw new Error('HTTP ' + r.status);
+		}).then(function(data) {
+			rfid_poll_pending = false;
+			rfid_scan(data);
+		}).catch(function(e) {
+			window.clearTimeout(timeout);
+			rfid_poll_pending = false;
+			rfid_show_error('RFID scan error: ' + e.message, true);
+		});
+	}).catch(function(e) {
 		rfid_poll_pending = false;
-		rfid_scan(data, textStatus);
-	}).fail(function(jqXHR, textStatus, error) {
-		window.clearTimeout(poll_timeout);
-		rfid_poll_pending = false;
-		body.html(
-			'RFID server error: ' + textStatus + ' — ' +
-			'<a href="https://localhost:9000" target="_blank" style="color:orange;text-decoration:underline">' +
-			'open https://localhost:9000</a> in a new tab and accept self-signed certificate'
-		).css('color', 'orange');
+		// Determine error type from message
+		var msg = 'RFID server not reachable';
+		if ( e.name == 'TypeError' || e.message.indexOf('Failed to fetch') >= 0 ) {
+			msg += ' (connection refused or TLS error)';
+		} else if ( e.message.indexOf('abort') >= 0 || e.message.indexOf('timeout') >= 0 ) {
+			msg += ' (timeout)';
+		} else if ( e.message.indexOf('HTTP') >= 0 ) {
+			msg += ' (' + e.message + ')';
+		}
+		rfid_show_error(msg, true);
 	});
 }
 
-function rfid_scan(data,textStatus) {
+function rfid_scan(data) {
 
 	var body = $('#rfid-popup-body');
 	if ( body.length == 0 ) body = rfid_create_popup();
