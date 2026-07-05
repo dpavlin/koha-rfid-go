@@ -12,6 +12,18 @@ import (
 	"koha-rfid/internal/rfidops"
 )
 
+// loggingResponseWriter wraps http.ResponseWriter to capture the status code
+// for request logging.
+type loggingResponseWriter struct {
+	http.ResponseWriter
+	status int
+}
+
+func (lw *loggingResponseWriter) WriteHeader(code int) {
+	lw.status = code
+	lw.ResponseWriter.WriteHeader(code)
+}
+
 // HttpServer provides the local JSONP API for the Koha JavaScript integration.
 type HttpServer struct {
 	listen   string
@@ -64,17 +76,25 @@ func (s *HttpServer) Run() error {
 		addr = "localhost:9000"
 	}
 
-	// Wrap mux with CORS headers for every request
+	// Wrap mux with CORS headers and request logging for every request
 	var handler http.Handler = mux
 	handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		start := time.Now()
 		corsHeader(w)
 		if r.Method == "OPTIONS" {
 			w.WriteHeader(204)
+			if s.debug {
+				log.Printf("HTTP %s %s -> 204 in %v", r.Method, r.URL.Path, time.Since(start))
+			}
 			return
 		}
-		mux.ServeHTTP(w, r)
+		// Wrap the response writer to capture status code
+		lw := &loggingResponseWriter{ResponseWriter: w, status: 200}
+		mux.ServeHTTP(lw, r)
+		if s.debug {
+			log.Printf("HTTP %s %s -> %d in %v", r.Method, r.URL.Path, lw.status, time.Since(start))
+		}
 	})
-
 	if s.tlsCert != "" && s.tlsKey != "" {
 		log.Printf("HTTPS server listening on %s", addr)
 		return http.ListenAndServeTLS(addr, s.tlsCert, s.tlsKey, handler)

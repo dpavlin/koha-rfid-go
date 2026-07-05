@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"strings"
+	"sync"
 	"time"
 
 	"go.bug.st/serial"
@@ -50,8 +51,10 @@ func crc16(data []byte) uint16 {
 
 // RfidReader wraps serial port communication with 3M 810 reader
 type RfidReader struct {
-	port  serial.Port
-	debug bool
+	port     serial.Port
+	debug    bool
+	portName string       // saved port name for re-connect on reset
+	mu       sync.Mutex   // guards serial port access against concurrent HTTP requests
 }
 
 func NewRfidReader(comPort string, debug bool) (*RfidReader, error) {
@@ -67,7 +70,7 @@ func NewRfidReader(comPort string, debug bool) (*RfidReader, error) {
 	}
 	port.SetReadTimeout(100 * time.Millisecond)
 
-	r := &RfidReader{port: port, debug: debug}
+	r := &RfidReader{port: port, debug: debug, portName: comPort}
 
 	// Drain any pending data on startup (matches Perl init)
 	buf := make([]byte, 3)
@@ -172,6 +175,56 @@ func (r *RfidReader) readResponse() ([]byte, error) {
 	return payload[:payloadLen-2], nil
 }
 
+// Reset closes and re-opens the serial port to recover a stuck reader.
+func (r *RfidReader) Reset() error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	if r.debug {
+		log.Printf("resetting serial port %s", r.portName)
+	}
+	r.port.Close()
+
+	mode := &serial.Mode{
+		BaudRate: ReaderBaud,
+		DataBits: 8,
+		Parity:   serial.NoParity,
+		StopBits: serial.OneStopBit,
+	}
+	port, err := serial.Open(r.portName, mode)
+	if err != nil {
+		return fmt.Errorf("re-open serial port: %w", err)
+	}
+	port.SetReadTimeout(100 * time.Millisecond)
+	r.port = port
+
+	// Drain pending data
+	buf := make([]byte, 3)
+	n, _ := port.Read(buf)
+	if n > 0 {
+		lenByte := buf[2]
+		drain := make([]byte, lenByte)
+		port.Read(drain)
+		if r.debug {
+			log.Printf("drain after reset: %x", drain)
+		}
+	}
+
+	if r.debug {
+		log.Printf("serial port %s reset OK", r.portName)
+	}
+	return nil
+}
+
+// Lock / Unlock for concurrent access from HTTP handlers
+func (r *RfidReader) Lock() {
+	r.mu.Lock()
+}
+
+func (r *RfidReader) Unlock() {
+	r.mu.Unlock()
+}
+
 // Probe sends the hardware version probe command.
 func (r *RfidReader) Probe() (string, error) {
 	err := r.sendFrame("D5 00 05 04 00 11 8C66")
@@ -222,6 +275,48 @@ func (r *RfidReader) Inventory() ([]string, error) {
 		tags = append(tags, hex.EncodeToString(tagBytes))
 	}
 	return tags, nil
+}
+
+// consecutiveFailures tracks serial errors for auto-reset detection.
+var consecutiveFailures int
+
+// InventoryWithReset performs Inventory with automatic serial port reset when
+// the reader stops responding (consecutive failures).  Callers should use this
+// instead of Inventory to recover from a stuck reader automatically.
+func (r *RfidReader) InventoryWithReset() ([]string, error) {
+	// Try the normal scan first
+	tags, err := r.Inventory()
+	if err == nil {
+		consecutiveFailures = 0
+		return tags, nil
+	}
+
+	consecutiveFailures++
+	if r.debug {
+		log.Printf("inventory error (consecutive failures: %d): %v", consecutiveFailures, err)
+	}
+
+	// After 3 consecutive failures, reset the serial port
+	if consecutiveFailures >= 3 {
+		if r.debug {
+			log.Printf("resetting serial port after %d consecutive failures", consecutiveFailures)
+		}
+		if resetErr := r.Reset(); resetErr != nil {
+			log.Printf("serial port reset failed: %v", resetErr)
+		} else {
+			consecutiveFailures = 0
+			// Try once more after reset
+			tags, err = r.Inventory()
+			if err == nil {
+				return tags, nil
+			}
+			if r.debug {
+				log.Printf("inventory still failing after reset: %v", err)
+			}
+		}
+	}
+
+	return nil, err
 }
 
 // ReadBlocks reads blocks from a tag.

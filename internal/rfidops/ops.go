@@ -15,10 +15,13 @@ import (
 // RfidOps abstracts the RFID reader so callers can swap in a mock for testing.
 type RfidOps interface {
 	Inventory() ([]string, error)
+	InventoryWithReset() ([]string, error) // auto-reset on consecutive failures
 	ReadBlocks(tag string, start, count int) (map[int]string, error)
 	WriteBlocks(tag string, data string) error
 	ReadAfi(tag string) (byte, error)
 	WriteAfi(tag string, afi byte) error
+	Lock()
+	Unlock()
 }
 
 // ---------------------------------------------------------------------------
@@ -44,9 +47,12 @@ type ScanResult struct {
 }
 
 // Scan performs one inventory pass and returns decoded tag info for every tag
-// found.
+// found.  Uses InventoryWithReset for automatic reader recovery.
 func Scan(ops RfidOps) (*ScanResult, error) {
-	tags, err := ops.Inventory()
+	ops.Lock()
+	defer ops.Unlock()
+
+	tags, err := ops.InventoryWithReset()
 	if err != nil {
 		return nil, err
 	}
@@ -99,6 +105,9 @@ type ProgramResult struct {
 
 // Program writes one or more tags.
 func Program(ops RfidOps, opsList []ProgramOp) *ProgramResult {
+	ops.Lock()
+	defer ops.Unlock()
+
 	res := &ProgramResult{OK: 1}
 	for _, op := range opsList {
 		tag := strings.ToUpper(op.SID)
@@ -163,6 +172,8 @@ type SecureResult struct {
 
 // Secure writes AFI bytes to one or more tags.
 func Secure(ops RfidOps, opsList []SecureOp) *SecureResult {
+	ops.Lock()
+	defer ops.Unlock()
 	for _, op := range opsList {
 		tag := strings.ToUpper(op.SID)
 		afiByte, err := hex.DecodeString(op.AfiHex)

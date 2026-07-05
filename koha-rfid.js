@@ -342,6 +342,7 @@ function rfid_poll() {
 			window.clearTimeout(timeout);
 			rfid_poll_pending = false;
 			rfid_show_error('RFID scan error: ' + e.message, true);
+			rfid_timeout = window.setTimeout( rfid_poll, 5000 );
 		});
 	}).catch(function(e) {
 		rfid_poll_pending = false;
@@ -354,6 +355,7 @@ function rfid_poll() {
 			msg += ' (' + e.message + ')';
 		}
 		rfid_show_error(msg, true);
+		rfid_timeout = window.setTimeout( rfid_poll, 5000 );
 	});
 }
 
