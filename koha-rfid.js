@@ -46,7 +46,7 @@ function afi_valid_for(security, page) {
 	return false;
 }
 
-// Create floating RFID status popup
+// Create floating RFID status popup (called once at page load)
 function rfid_create_popup() {
 	var saved = localStorage.getItem('rfid_popup_pos');
 	var pos = saved ? JSON.parse(saved) : { top: 10, right: 10 };
@@ -63,22 +63,18 @@ function rfid_create_popup() {
 			'<div id="rfid-popup-body">—</div>' +
 		'</div>';
 
-	// Remove any existing popup, then append
-	$('#rfid-popup').remove();
 	$('body').append(html);
 
 	// Make it draggable
 	var popup = $('#rfid-popup');
 	var header = $('#rfid-popup-header');
-	var drag = false, offsetX, offsetY, startX, startY;
+	var drag = false, offsetX, offsetY;
 
 	header.on('mousedown', function(e) {
 		drag = true;
 		var p = popup.position();
 		offsetX = e.clientX - p.left;
 		offsetY = e.clientY - p.top;
-		startX = e.clientX;
-		startY = e.clientY;
 	});
 
 	$(document).on('mouseup', function() {
@@ -108,7 +104,8 @@ function rfid_poll() {
 	if ( rfid_poll_pending ) return;
 	rfid_poll_pending = true;
 
-	var body = rfid_create_popup();
+	var body = $('#rfid-popup-body');
+	if ( body.length == 0 ) body = rfid_create_popup();
 
 	// timeout: if no response in 5 seconds, show connection error
 	var poll_timeout = window.setTimeout(function() {
@@ -138,7 +135,7 @@ function rfid_poll() {
 function rfid_scan(data,textStatus) {
 
 	var body = $('#rfid-popup-body');
-	if ( body.size() == 0 ) body = rfid_create_popup();
+	if ( body.length == 0 ) body = rfid_create_popup();
 
 	// detect active tab: checkin tab has aria-hidden="false", checkout tab has aria-hidden="true"
 	var checkin_active = $('#checkin_search').attr('aria-hidden') == 'false';
