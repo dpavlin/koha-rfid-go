@@ -20,18 +20,31 @@ import (
 )
 
 func genSelfSignedCert() (certFile, keyFile string, err error) {
+	certFile = "rfid-localhost.crt"
+	keyFile = "rfid-localhost.key"
+
+	// Reuse existing cert/key if they exist
+	if _, errStat := os.Stat(certFile); errStat == nil {
+		if _, errStat2 := os.Stat(keyFile); errStat2 == nil {
+			log.Printf("Reusing existing cert: %s, key: %s", certFile, keyFile)
+			return certFile, keyFile, nil
+		}
+	}
+
 	// Generate a self-signed cert for localhost
 	key, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
 		return "", "", fmt.Errorf("generate key: %w", err)
 	}
 
+	// Use 10 year validity — browsers accept self-signed certs much longer than
+	// the 398-day limit which only applies to publicly-trusted CAs.
 	template := x509.Certificate{
 		SerialNumber:          big.NewInt(1),
 		Subject:               pkix.Name{Organization: []string{"RFID Server"}},
 		DNSNames:              []string{"localhost"},
 		NotBefore:             time.Now().Add(-1 * time.Hour),
-		NotAfter:              time.Now().Add(365 * 24 * time.Hour),
+		NotAfter:              time.Now().Add(10 * 365 * 24 * time.Hour),
 		KeyUsage:              x509.KeyUsageKeyEncipherment | x509.KeyUsageDigitalSignature,
 		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
 		BasicConstraintsValid: true,
@@ -40,9 +53,6 @@ func genSelfSignedCert() (certFile, keyFile string, err error) {
 	if err != nil {
 		return "", "", fmt.Errorf("create cert: %w", err)
 	}
-
-	certFile = "rfid-localhost.crt"
-	keyFile = "rfid-localhost.key"
 
 	certOut, err := os.Create(certFile)
 	if err != nil {
