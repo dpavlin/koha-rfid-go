@@ -46,21 +46,74 @@ function afi_valid_for(security, page) {
 	return false;
 }
 
+// Create floating RFID status popup
+function rfid_create_popup() {
+	var saved = localStorage.getItem('rfid_popup_pos');
+	var pos = saved ? JSON.parse(saved) : { top: 10, right: 10 };
+	var html =
+		'<div id="rfid-popup" style="' +
+			'position:fixed; z-index:9999;' +
+			'top:' + pos.top + 'px; right:' + pos.right + 'px;' +
+			'background:#333; color:#fff; padding:10px 14px;' +
+			'border-radius:6px; font-size:13px; font-family:monospace;' +
+			'cursor:move; box-shadow:2px 2px 8px rgba(0,0,0,0.4);' +
+			'min-width:200px;' +
+		'">' +
+			'<div id="rfid-popup-header" style="font-weight:bold; margin-bottom:4px;">RFID reader</div>' +
+			'<div id="rfid-popup-body">—</div>' +
+		'</div>';
+
+	// Remove any existing popup, then append
+	$('#rfid-popup').remove();
+	$('body').append(html);
+
+	// Make it draggable
+	var popup = $('#rfid-popup');
+	var header = $('#rfid-popup-header');
+	var drag = false, offsetX, offsetY, startX, startY;
+
+	header.on('mousedown', function(e) {
+		drag = true;
+		var p = popup.position();
+		offsetX = e.clientX - p.left;
+		offsetY = e.clientY - p.top;
+		startX = e.clientX;
+		startY = e.clientY;
+	});
+
+	$(document).on('mouseup', function() {
+		if (drag) {
+			drag = false;
+			var p = popup.position();
+			var w = $(window).width();
+			var h = $(window).height();
+			var pw = popup.outerWidth();
+			localStorage.setItem('rfid_popup_pos', JSON.stringify({
+				top: Math.min(p.top, h - 60),
+				right: Math.max(w - p.left - pw, 0)
+			}));
+		}
+	});
+
+	$(document).on('mousemove', function(e) {
+		if (drag) {
+			popup.css({ top: e.clientY - offsetY, left: e.clientX - offsetX });
+		}
+	});
+
+	return $('#rfid-popup-body');
+}
+
 function rfid_poll() {
 	if ( rfid_poll_pending ) return;
 	rfid_poll_pending = true;
 
+	var body = rfid_create_popup();
+
 	// timeout: if no response in 5 seconds, show connection error
 	var poll_timeout = window.setTimeout(function() {
 		rfid_poll_pending = false;
-		var span = $('span#rfid');
-		if ( span.size() == 0 ) {
-			span = $('ul#i18nMenu').append('<li><span id=rfid>RFID reader found<span>');
-			if ( span.size() == 0 )
-				span = $('div#login').prepend('<span id=rfid>RFID reader found</span>');
-			span = $('span#rfid');
-		}
-		span.html(
+		body.html(
 			'RFID server not reachable (TLS error?) — ' +
 			'<a href="https://localhost:9000" target="_blank" style="color:orange;text-decoration:underline">' +
 			'open https://localhost:9000</a> in a new tab and accept self-signed certificate'
@@ -74,14 +127,7 @@ function rfid_poll() {
 	}).fail(function(jqXHR, textStatus, error) {
 		window.clearTimeout(poll_timeout);
 		rfid_poll_pending = false;
-		var span = $('span#rfid');
-		if ( span.size() == 0 ) {
-			span = $('ul#i18nMenu').append('<li><span id=rfid>RFID reader found<span>');
-			if ( span.size() == 0 )
-				span = $('div#login').prepend('<span id=rfid>RFID reader found</span>');
-			span = $('span#rfid');
-		}
-		span.html(
+		body.html(
 			'RFID server error: ' + textStatus + ' — ' +
 			'<a href="https://localhost:9000" target="_blank" style="color:orange;text-decoration:underline">' +
 			'open https://localhost:9000</a> in a new tab and accept self-signed certificate'
@@ -91,15 +137,8 @@ function rfid_poll() {
 
 function rfid_scan(data,textStatus) {
 
-	var span = $('span#rfid');
-
-	if ( span.size() == 0 ) // insert last in language bar on bottom
-		span = $('ul#i18nMenu').append('<li><span id=rfid>RFID reader found<span>');
-
-	if ( span.size() == 0 ) // or before login on top
-		span = $('div#login').prepend('<span id=rfid>RFID reader found</span>');
-
-	span = $('span#rfid');
+	var body = $('#rfid-popup-body');
+	if ( body.size() == 0 ) body = rfid_create_popup();
 
 	// detect active tab: checkin tab has aria-hidden="false", checkout tab has aria-hidden="true"
 	var checkin_active = $('#checkin_search').attr('aria-hidden') == 'false';
@@ -115,7 +154,7 @@ function rfid_scan(data,textStatus) {
 
 			if ( t.content.length == 0 ) { // empty tag
 
-				span.text( t.sid + ' empty' ).css('color', 'red' );
+				body.text( t.sid + ' empty' ).css('color', 'red' );
 
 			} else if ( t.content.substr(0,3) == '130' ) { // books
 
@@ -128,7 +167,7 @@ function rfid_scan(data,textStatus) {
 
 				var label = sec == 'DA' ? 'checked in' : sec == 'D7' ? 'on loan' : 'unknown';
 				var color = sec == 'DA' ? 'red' : sec == 'D7' ? 'green' : 'blue';
-				span.text( t.content + ' (' + label + ')' ).css('color', color);
+				body.text( t.content + ' (' + label + ')' ).css('color', color);
 
 				// determine which form to fill based on active tab, fall back to URL
 				var is_checkout = checkout_active || (!checkin_active && circulation);
@@ -164,7 +203,7 @@ function rfid_scan(data,textStatus) {
 				}
 
 			} else {
-				span.text( t.content ).css('color', 'blue' );
+				body.text( t.content ).css('color', 'blue' );
 
 				if ( ! rfid_submitted && ( url.substr(-14,14) != 'circulation.pl' || $('form[name=mainform]').size() == 0 ) ) {
 					var last = sessionStorage.getItem('rfid_last_barcode');
@@ -180,11 +219,11 @@ function rfid_scan(data,textStatus) {
 		} else {
 			var error = data.tags.length + ' tags near reader: ';
 			$.each( data.tags, function(i,tag) { error += tag.content + ' '; } );
-			span.text( error ).css( 'color', 'red' );
+			body.text( error ).css( 'color', 'red' );
 		}
 
 	} else {
-		span.text( 'no tags in range' ).css('color','gray');
+		body.text( 'no tags in range' ).css('color','gray');
 		sessionStorage.removeItem('rfid_last_barcode');
 	}
 
