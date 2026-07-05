@@ -20,6 +20,22 @@
 var rfid_timeout = null;
 var rfid_poll_pending = false;
 
+// ---------------------------------------------------------------------------
+// localStorage keys used:
+//   rfid_pending    — pending AFI write after Koha form submission (survives page reload)
+//   koha_state      — cached Koha-verified state for each barcode
+//   rfid_last_barcode — last submitted barcode (prevents double-submit on same page load)
+// ---------------------------------------------------------------------------
+
+// Read/write helpers for localStorage JSON objects
+function rfid_storage_get(key, def) {
+	var v = localStorage.getItem(key);
+	return v ? JSON.parse(v) : (def || {});
+}
+function rfid_storage_set(key, obj) {
+	localStorage.setItem(key, JSON.stringify(obj));
+}
+
 function barcode_on_screen(barcode) {
 	var found = 0;
 	$('table tr td a:contains(130)').each( function(i,o) {
@@ -49,42 +65,66 @@ function rfid_secure(barcode, sid, val) {
 //   DA = secured (checked in), door ignores
 //   D7 = unsecured (checked out), door beeps
 // For checkout we need DA (item is in library), for checkin we need D7 (item was on loan)
-function afi_valid_for(security, page) {
-	var s = security.toUpperCase();
-	if (page == 'circulation') return s == 'DA';
-	if (page == 'returns') return s == 'D7';
-	if (page == 'renew') return s == 'D7';
-	return false;
+function afi_label(sec) {
+	var s = (sec || '').toUpperCase();
+	return s == 'DA' ? 'checked in' : s == 'D7' ? 'on loan' : 'unknown';
+}
+function afi_color(sec) {
+	var s = (sec || '').toUpperCase();
+	return s == 'DA' ? 'red' : s == 'D7' ? 'green' : 'blue';
 }
 
-// Per-tag processed check. Returns true if this barcode was recently processed
-// (same barcode regardless of AFI change, within 30s of the first detection).
-function rfid_was_processed(barcode, security) {
-	var stored = sessionStorage.getItem('rfid_processed');
-	if ( ! stored ) return false;
-	try {
-		var p = JSON.parse(stored);
-		if ( p.barcode == barcode ) {
-			// Security changed (DA→D7 or D7→DA) — definitely processed
-			if ( p.security != security ) return true;
-			// Same barcode + same security within 30s — still processed
-			if ( p.time && (Date.now() - p.time) < 30000 ) return true;
-		}
-	} catch(e) {}
-	return false;
+// ---------------------------------------------------------------------------
+// Pending AFI writes — survive page reload via localStorage
+//
+// Before submitting a Koha form we store:
+//   rfid_pending[barcode] = { target: 'DA'|'D7', current: 'DA'|'D7', time: ms }
+//
+// After page reload, if the same tag is still on reader with the same
+// current AFI (meaning the write hasn't happened yet), we perform it.
+// ---------------------------------------------------------------------------
+
+function rfid_pending_set(barcode, target, current) {
+	var p = rfid_storage_get('rfid_pending', {});
+	p[barcode] = { target: target, current: current, time: Date.now() };
+	rfid_storage_set('rfid_pending', p);
 }
 
-// Mark a tag as processed (stores barcode + AFI + timestamp in sessionStorage).
-// Does NOT stop scanning — new tags are detected immediately.
-function rfid_mark_processed(barcode, security) {
-	sessionStorage.setItem('rfid_processed', JSON.stringify({
-		barcode: barcode,
-		security: security,
-		time: Date.now()
-	}));
+function rfid_pending_get(barcode) {
+	var p = rfid_storage_get('rfid_pending', {});
+	return p[barcode] || null;
 }
 
-// Create floating RFID status popup (called once at page load)
+function rfid_pending_clear(barcode) {
+	var p = rfid_storage_get('rfid_pending', {});
+	delete p[barcode];
+	rfid_storage_set('rfid_pending', p);
+}
+
+// ---------------------------------------------------------------------------
+// Koha-verified state cache — remembers what Koha says about each barcode
+//
+// After successful Koha processing we store:
+//   koha_state[barcode] = 'DA'|'D7'  (what Koha believes the loan status is)
+//
+// On next scan we can compare tag AFI vs koha_state to detect mismatches.
+// ---------------------------------------------------------------------------
+
+function rfid_koha_state_get(barcode) {
+	var s = rfid_storage_get('koha_state', {});
+	return s[barcode] || null;
+}
+
+function rfid_koha_state_set(barcode, state) {
+	var s = rfid_storage_get('koha_state', {});
+	s[barcode] = state;
+	rfid_storage_set('koha_state', s);
+}
+
+// ---------------------------------------------------------------------------
+// Popup
+// ---------------------------------------------------------------------------
+
 function rfid_create_popup() {
 	var saved = localStorage.getItem('rfid_popup_pos');
 	var pos = saved ? JSON.parse(saved) : { top: 10, right: 10 };
@@ -103,7 +143,6 @@ function rfid_create_popup() {
 
 	$('body').append(html);
 
-	// Make it draggable
 	var popup = $('#rfid-popup');
 	var header = $('#rfid-popup-header');
 	var drag = false, offsetX, offsetY;
@@ -138,7 +177,6 @@ function rfid_create_popup() {
 	return $('#rfid-popup-body');
 }
 
-// Show error in RFID popup with a link to accept TLS certificate
 function rfid_show_error(msg, hint) {
 	var body = $('#rfid-popup-body');
 	if ( body.length == 0 ) body = rfid_create_popup();
@@ -146,7 +184,6 @@ function rfid_show_error(msg, hint) {
 	body.html(msg + (hint ? link : '')).css('color', 'orange');
 }
 
-// Fetch with timeout and detailed error classification
 function rfid_fetch(url, timeout_ms) {
 	var controller = new AbortController();
 	var timer = setTimeout(function() { controller.abort(); }, timeout_ms);
@@ -159,7 +196,6 @@ function rfid_fetch(url, timeout_ms) {
 	});
 }
 
-// Check if RFID server is alive (fast ping)
 function rfid_check_server() {
 	return rfid_fetch('https://localhost:9000/ping', 3000).then(function(r) {
 		if ( r.ok ) return true;
@@ -176,9 +212,7 @@ function rfid_poll() {
 	var body = $('#rfid-popup-body');
 	if ( body.length == 0 ) body = rfid_create_popup();
 
-	// Step 1: quick server health check
 	rfid_check_server().then(function() {
-		// Step 2: server is alive, now try scan
 		var timeout = window.setTimeout(function() {
 			rfid_poll_pending = false;
 			rfid_show_error('RFID server not responding (reader timeout)', true);
@@ -198,7 +232,6 @@ function rfid_poll() {
 		});
 	}).catch(function(e) {
 		rfid_poll_pending = false;
-		// Determine error type from message
 		var msg = 'RFID server not reachable';
 		if ( e.name == 'TypeError' || e.message.indexOf('Failed to fetch') >= 0 ) {
 			msg += ' (connection refused or TLS error)';
@@ -211,12 +244,38 @@ function rfid_poll() {
 	});
 }
 
+// ---------------------------------------------------------------------------
+// rfid_scan — the main RFID scan handler
+//
+// Order of operations per page:
+//
+// RETURNS (checkin):
+//   1. Always fill #ret_barcode + submit to Koha (regardless of current AFI)
+//   2. Set pending_afi[barcode] = DA in localStorage BEFORE submit
+//   3. Page reloads → on next scan, if tag still has old AFI, write DA
+//   4. Update koha_state[barcode] = DA
+//
+// CIRCULATION (checkout):
+//   1. Only if tag AFI == DA (checked in) → fill barcode + submit to Koha
+//   2. Set pending_afi[barcode] = D7 in localStorage BEFORE submit
+//   3. Page reloads → on next scan, if tag still has DA, write D7
+//   4. Update koha_state[barcode] = D7
+//
+// RENEW:
+//   1. Fill #barcode + submit (tag must be D7 — on loan)
+//   2. No AFI write needed (loan status unchanged)
+//
+// PENDING AFI RESOLUTION (runs before any new form submission):
+//   If rfid_pending[barcode] exists and tag AFI matches the stored current AFI,
+//   it means the page reloaded after Koha processed the form but the AFI write
+//   hasn't happened yet. Perform it now.
+// ---------------------------------------------------------------------------
+
 function rfid_scan(data) {
 
 	var body = $('#rfid-popup-body');
 	if ( body.length == 0 ) body = rfid_create_popup();
 
-	// detect active tab: checkin tab has aria-hidden="false", checkout tab has aria-hidden="true"
 	var checkin_active = $('#checkin_search').attr('aria-hidden') == 'false';
 	var checkout_active = $('#checkout_search').attr('aria-hidden') == 'false';
 
@@ -236,85 +295,114 @@ function rfid_scan(data) {
 			} else if ( t.content.substr(0,3) == '130' ) { // books
 
 				var sec = (t.security || '').toUpperCase();
-
-				if ( circulation )
-					 rfid_secure( t.content, t.sid, 'D7' );
-				if ( returns )
-					 rfid_secure( t.content, t.sid, 'DA' );
-				// renew: no AFI write needed (book stays on loan)
-
-				var label = sec == 'DA' ? 'checked in' : sec == 'D7' ? 'on loan' : 'unknown';
-				var color = sec == 'DA' ? 'red' : sec == 'D7' ? 'green' : 'blue';
+				var label = afi_label(sec);
+				var color = afi_color(sec);
 				body.text( t.content + ' (' + label + ')' ).css('color', color);
 
-				// Per-tag processed check: skip form fill if this barcode was recently handled
-				if ( rfid_was_processed(t.content, sec) ) {
-					body.text( t.content + ' (processed)' ).css('color', '#888');
+				// -----------------------------------------------------------
+				// Step 1: resolve any pending AFI write from a previous page load
+				// -----------------------------------------------------------
+				var pending = rfid_pending_get(t.content);
+				if ( pending && pending.current == sec ) {
+					// Page reloaded after Koha processed this barcode,
+					// but the AFI write is still pending. Do it now.
+					body.text( t.content + ' (writing ' + pending.target + '...)' ).css('color', '#888');
+					rfid_secure( t.content, t.sid, pending.target );
+					rfid_pending_clear(t.content);
+					rfid_koha_state_set(t.content, pending.target);
+					body.text( t.content + ' (' + afi_label(pending.target) + ')' ).css('color', afi_color(pending.target));
+					rfid_timeout = window.setTimeout( rfid_poll, 1000 );
+					return;
+				}
+				// If pending exists but current AFI already matches target,
+				// the write happened on a previous page load — just clear state.
+				if ( pending && pending.target == sec ) {
+					rfid_pending_clear(t.content);
+					rfid_koha_state_set(t.content, sec);
+				}
+
+				// -----------------------------------------------------------
+				// Step 2: skip if this barcode was already submitted on this page
+				// -----------------------------------------------------------
+				var last = sessionStorage.getItem('rfid_last_barcode');
+				if ( t.content == last ) {
 					rfid_timeout = window.setTimeout( rfid_poll, 1000 );
 					return;
 				}
 
-				// Renew page: simple form with #barcode, no tabs
-				if ( renew && afi_valid_for(sec, 'renew') ) {
-					if ( ! barcode_on_screen( t.content ) ) {
-						var last = sessionStorage.getItem('rfid_last_barcode');
-						if ( t.content != last ) {
-							sessionStorage.setItem('rfid_last_barcode', t.content);
-							rfid_mark_processed(t.content, sec);
-							var i = $('#barcode');
-							if ( i.val() != t.content ) {
-								i.val( t.content );
-								i.closest('form').submit();
-							}
+				// -----------------------------------------------------------
+				// Step 3: Renew page — simple #barcode form, no AFI write
+				// -----------------------------------------------------------
+				if ( renew ) {
+					if ( sec == 'D7' ) {
+						sessionStorage.setItem('rfid_last_barcode', t.content);
+						var i = $('#barcode');
+						if ( i.val() != t.content ) {
+							i.val( t.content );
+							i.closest('form').submit();
 						}
+					} else {
+						body.text( t.content + ' (not on loan — cannot renew)' ).css('color', 'blue');
 					}
 					rfid_timeout = window.setTimeout( rfid_poll, 1000 );
 					return;
 				}
 
-				// determine which form to fill based on active tab, fall back to URL
-				var is_checkout = checkout_active || (!checkin_active && circulation);
-				var is_checkin = checkin_active || returns;
+				// -----------------------------------------------------------
+				// Step 4: Checkin (returns.pl) — always submit to Koha
+				// -----------------------------------------------------------
+				if ( returns ) {
+					// Set pending AFI write BEFORE form submission.
+					// After page reload, the pending resolution above will write DA.
+					rfid_pending_set(t.content, 'DA', sec);
+					sessionStorage.setItem('rfid_last_barcode', t.content);
+					var i = $('#ret_barcode');
+					if ( i.val() != t.content ) {
+						i.val( t.content );
+						i.closest('form').submit();
+					}
+					rfid_timeout = window.setTimeout( rfid_poll, 1000 );
+					return;
+				}
 
-				if ( ! barcode_on_screen( t.content ) ) {
-
-					if ( is_checkin && afi_valid_for(sec, 'returns') ) {
-						// checkin form: use #ret_barcode
-						var last = sessionStorage.getItem('rfid_last_barcode');
-						if ( t.content != last ) {
-							sessionStorage.setItem('rfid_last_barcode', t.content);
-							rfid_mark_processed(t.content, sec);
-							var i = $('#ret_barcode');
-							if ( i.val() != t.content ) {
-								i.val( t.content );
-								i.closest('form').submit();
-							}
-						}
-					} else if ( is_checkout && afi_valid_for(sec, 'circulation') ) {
-						// checkout form: use input[name=barcode]:last
-						var last = sessionStorage.getItem('rfid_last_barcode');
-						if ( t.content != last ) {
-							sessionStorage.setItem('rfid_last_barcode', t.content);
-							rfid_mark_processed(t.content, sec);
+				// -----------------------------------------------------------
+				// Step 5: Circulation (checkout) — only if tag says checked in
+				// -----------------------------------------------------------
+				if ( circulation ) {
+					if ( sec == 'DA' ) {
+						// Set pending AFI write BEFORE form submission.
+						// After page reload, pending resolution will write D7.
+						rfid_pending_set(t.content, 'D7', sec);
+						sessionStorage.setItem('rfid_last_barcode', t.content);
+						var is_checkout = checkout_active || (!checkin_active && circulation);
+						var is_checkin = checkin_active || returns;
+						if ( is_checkout ) {
 							var i = $('input[name=barcode]:last');
 							if ( i.val() != t.content ) {
 								i.val( t.content );
 								i.closest('form').submit();
 							}
 						}
+					} else {
+						body.text( t.content + ' (not checked in — cannot checkout)' ).css('color', 'blue');
 					}
+					rfid_timeout = window.setTimeout( rfid_poll, 1000 );
+					return;
 				}
 
-			} else {
-				body.text( t.content ).css('color', 'blue' );
+				// -----------------------------------------------------------
+				// Fallback: not on a known Koha page — show info
+				// -----------------------------------------------------------
+				body.text( t.content + ' (' + label + ')' ).css('color', color);
 
-				if ( url.indexOf('circulation.pl') < 0 || $('form[name=mainform]').size() == 0 ) {
-					var last = sessionStorage.getItem('rfid_last_barcode');
-					if ( t.content != last ) {
-						sessionStorage.setItem('rfid_last_barcode', t.content);
-						$('input[name=findborrower]').val( t.content )
-							.parent().submit();
-					}
+			} else {
+				// Non-book barcode (patron card)
+				body.text( t.content ).css('color', 'blue' );
+				var last = sessionStorage.getItem('rfid_last_barcode');
+				if ( t.content != last && ( url.indexOf('circulation.pl') < 0 || $('form[name=mainform]').size() == 0 ) ) {
+					sessionStorage.setItem('rfid_last_barcode', t.content);
+					$('input[name=findborrower]').val( t.content )
+						.parent().submit();
 				}
 			}
 
@@ -322,17 +410,13 @@ function rfid_scan(data) {
 			var error = data.tags.length + ' tags near reader: ';
 			$.each( data.tags, function(i,tag) { error += tag.content + ' '; } );
 			body.text( error ).css( 'color', 'red' );
-			sessionStorage.removeItem('rfid_processed');
 		}
 
 	} else {
-		// No tags — clear processed state so new tags work immediately
 		body.text( 'no tags in range' ).css('color','gray');
 		sessionStorage.removeItem('rfid_last_barcode');
-		sessionStorage.removeItem('rfid_processed');
 	}
 
-	// Always keep polling
 	rfid_timeout = window.setTimeout( rfid_poll, 1000 );
 }
 
