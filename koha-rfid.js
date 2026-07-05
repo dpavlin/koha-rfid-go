@@ -22,23 +22,6 @@ var rfid_timeout = null;
 var rfid_poll_pending = false;
 var rfid_events = [];  // in-memory cache of recent events
 var rfid_show_events = localStorage.getItem('rfid_show_events') == 'true';  // checkbox state
-var rfid_page_id = null;  // unique page load identifier (set on ready)
-
-// ---------------------------------------------------------------------------
-// localStorage keys used:
-//   rfid_events     — audit log array of { time, barcode, action, detail, page }
-//   rfid_popup_pos  — saved popup position
-// ---------------------------------------------------------------------------
-
-// Read/write helpers for localStorage JSON objects
-function rfid_storage_get(key, def) {
-	var v = localStorage.getItem(key);
-	return v ? JSON.parse(v) : (def || {});
-}
-function rfid_storage_set(key, obj) {
-	localStorage.setItem(key, JSON.stringify(obj));
-}
-
 // ---------------------------------------------------------------------------
 // Audit log — append-only event store with daily cleanup
 //
@@ -47,13 +30,11 @@ function rfid_storage_set(key, obj) {
 //   barcode — book barcode (130...)
 //   action  — 'scan', 'submit-checkin', 'submit-checkout', 'submit-renew', 'afi-write'
 //   detail  — AFI hex (DA/D7) or error string
-//   page    — unique page load id (to identify events from the same page load)
+//
+// The audit log is the SOLE source of truth for detecting duplicates:
+//   - If a barcode has a submit-* without a verified afi-write → write pending
+//   - If a barcode has a submit-* with a verified afi-write → already processed
 // ---------------------------------------------------------------------------
-
-function rfid_page() {
-	if ( !rfid_page_id ) rfid_page_id = Date.now().toString(36) + Math.random().toString(36).slice(2,5);
-	return rfid_page_id;
-}
 
 function rfid_event_push(barcode, action, detail) {
 	// Skip consecutive duplicate scan events for the same barcode
@@ -65,7 +46,7 @@ function rfid_event_push(barcode, action, detail) {
 		}
 	}
 	var events = rfid_storage_get('rfid_events', []);
-	events.push({ time: Date.now(), barcode: barcode, action: action, detail: detail, page: rfid_page() });
+	events.push({ time: Date.now(), barcode: barcode, action: action, detail: detail });
 	rfid_storage_set('rfid_events', events);
 	rfid_events = events.slice(-20);
 }
@@ -139,27 +120,43 @@ function rfid_event_last(barcode, actionPrefix) {
 	return best;
 }
 
-// Return true if this barcode was already submitted on the current page load
+// Return true if this barcode was already fully processed (submit + verified afi-write)
 function rfid_already_submitted(barcode) {
 	var events = rfid_storage_get('rfid_events', []);
-	var page = rfid_page();
+	var lastSubmit = null, lastSubmitIdx = -1;
+	var lastWrite = null, lastWriteIdx = -1;
 	for ( var i = events.length - 1; i >= 0; i-- ) {
 		var e = events[i];
-		if ( e.barcode == barcode && e.page == page ) {
-			if ( e.action.indexOf('submit-') === 0 ) return true;
+		if ( e.barcode == barcode ) {
+			if ( e.action.indexOf('submit-') === 0 ) {
+				if ( !lastSubmit || e.time > lastSubmit.time ) { lastSubmit = e; lastSubmitIdx = i; }
+			}
+			if ( e.action == 'afi-write' ) {
+				if ( !lastWrite || e.time > lastWrite.time ) { lastWrite = e; lastWriteIdx = i; }
+			}
 		}
+	}
+	// If there's a submit-* AND a subsequent afi-write with a valid hex detail (not error)
+	if ( lastSubmit && lastWrite && lastWriteIdx > lastSubmitIdx ) {
+		var d = (lastWrite.detail || '').toUpperCase();
+		if ( d == 'DA' || d == 'D7' ) return true;
 	}
 	return false;
 }
 
 // Return the AFI target for a pending write, or null if none needed
 // A pending write exists when the most recent event for this barcode is
-// a submit-* that should change AFI, and there is no afi-write after it.
+// a submit-* that should change AFI, and there is no successful afi-write after it.
 function rfid_pending_target(barcode) {
 	var lastSubmit = rfid_event_last(barcode, 'submit-');
 	if ( !lastSubmit ) return null;
 	var lastWrite = rfid_event_last(barcode, 'afi-write');
-	if ( lastWrite && lastWrite.time >= lastSubmit.time ) return null; // write already done
+	// If a write exists AFTER the submit AND it has a valid hex detail (success), write is done
+	if ( lastWrite && lastWrite.time >= lastSubmit.time ) {
+		var d = (lastWrite.detail || '').toUpperCase();
+		if ( d == 'DA' || d == 'D7' ) return null; // write already verified
+		// write exists but failed — still pending
+	}
 	if ( lastSubmit.action == 'submit-checkin' ) return 'DA';
 	if ( lastSubmit.action == 'submit-checkout' ) return 'D7';
 	return null; // renew or other — no AFI change needed
@@ -352,25 +349,35 @@ function rfid_poll() {
 // ---------------------------------------------------------------------------
 // rfid_scan — the main RFID scan handler
 //
-// Order of operations per page:
+// Order of operations (audit log is the sole source of truth):
+//
+// 1. PENDING AFI RESOLUTION:
+//    If the audit log shows a submit-* without a verified afi-write,
+//    the AFI write is pending. Write it now and return (don't submit form).
+//
+// 2. ALREADY PROCESSED:
+//    If the audit log shows a submit-* WITH a verified afi-write,
+//    the book was already processed. Skip (don't submit form).
+//
+// 3. NEW SUBMISSION:
+//    Otherwise, submit the form and record submit-* in the audit log.
 //
 // RETURNS (checkin):
-//   1. Submit to Koha once per state change (fill #barcode + submit)
-//   2. Record submit-checkin event in audit log
-//   3. Page reloads → on next scan, if pending AFI write is needed, perform it
+//   Submit to Koha once per state change (fill #barcode + submit)
+//   → page reloads → pending AFI write resolves → done
 //
 // CIRCULATION (checkout):
-//   1. Only if tag AFI == DA (checked in) → fill barcode + submit to Koha
-//   2. Record submit-checkout event in audit log
-//   3. Page reloads → on next scan, write D7 if pending
+//   Only if tag AFI == DA (checked in) → fill barcode + submit
+//   → page reloads → pending AFI write resolves → done
 //
 // RENEW:
-//   1. Fill #ren_barcode + submit (tag must be D7 — on loan)
-//   2. No AFI write needed (loan status unchanged)
+//   Fill #ren_barcode + submit (tag must be D7 — on loan)
+//   No AFI write needed (loan status unchanged)
 //
-// PENDING AFI RESOLUTION (runs before any new form submission):
-//   If audit log shows a submit-* without a subsequent afi-write, and the
-//   tag's current AFI matches the expected pre-submit AFI, perform the write now.
+// ACROSS PAGE RELOADS:
+//   The audit log persists in localStorage. After page reload, the scan
+//   loop will detect pending writes or already-processed books and act
+//   accordingly — no page tracking needed.
 // ---------------------------------------------------------------------------
 
 function rfid_scan(data) {

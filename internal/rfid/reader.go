@@ -347,17 +347,20 @@ func (r *RfidReader) ReadAfi(tag string) (byte, error) {
 	return afi, nil
 }
 
-// WriteAfi writes an AFI byte to a tag with retry loop.
+// WriteAfi writes an AFI byte to a tag with retry loop and read-back verification.
 func (r *RfidReader) WriteAfi(tag string, afi byte) error {
 	if len(tag) != 16 {
 		return fmt.Errorf("tag must be 16 hex chars")
 	}
 	cmdHex := fmt.Sprintf("09 %s %02x", tag, afi)
 	maxRetry := 100
+	var lastErr error
 	for i := 0; i < maxRetry; i++ {
 		err := r.sendFrame(cmdHex)
 		if err != nil {
-			return err
+			lastErr = fmt.Errorf("send: %w", err)
+			time.Sleep(50 * time.Millisecond)
+			continue
 		}
 		resp, err := r.readResponse()
 		if err != nil {
@@ -365,17 +368,39 @@ func (r *RfidReader) WriteAfi(tag string, afi byte) error {
 			if r.debug {
 				log.Printf("write AFI read error (retry %d): %v", i+1, err)
 			}
+			lastErr = fmt.Errorf("read: %w", err)
 			time.Sleep(50 * time.Millisecond)
 			continue
 		}
 		if len(resp) >= 2 && resp[0] == 0x09 && resp[1] == 0x00 {
-			return nil
+			// Reader accepted the write — now verify by reading back AFI
+			readAfi, err := r.ReadAfi(tag)
+			if err != nil {
+				if r.debug {
+					log.Printf("write AFI verify read error (retry %d): %v", i+1, err)
+				}
+				lastErr = fmt.Errorf("verify read: %w", err)
+				time.Sleep(50 * time.Millisecond)
+				continue
+			}
+			if readAfi == afi {
+				return nil
+			}
+			if r.debug {
+				log.Printf("write AFI verify mismatch: wrote %02x, read back %02x (retry %d/%d)", afi, readAfi, i+1, maxRetry)
+			}
+			lastErr = fmt.Errorf("verify mismatch: wrote %02x, read back %02x", afi, readAfi)
+			time.Sleep(50 * time.Millisecond)
+			continue
 		}
 		if len(resp) >= 2 && resp[0] == 0x09 && resp[1] == 0x06 {
 			time.Sleep(50 * time.Millisecond)
 			continue
 		}
 		return fmt.Errorf("unexpected AFI write response: %x", resp)
+	}
+	if lastErr != nil {
+		return lastErr
 	}
 	return fmt.Errorf("AFI write max retries exceeded")
 }
