@@ -24,9 +24,22 @@ var rfid_no_reader = localStorage.getItem('rfid_no_reader') == 'true'; // user o
 var rfid_events = [];  // in-memory cache of recent events
 var rfid_show_events = localStorage.getItem('rfid_show_events') == 'true';  // checkbox state
 
-// ---------------------------------------------------------------------------
-// Read/write helpers for localStorage JSON objects
-// ---------------------------------------------------------------------------
+// Debug namespace — exposed on window for rodney inspection
+window.rfidDebug = {};
+
+// In-memory set of barcodes already submitted on this page load (prevents re-submit loops)
+var rfid_submitted_this_page = {};
+
+// Expose key variables for rodney inspection
+window.rfidDebug.events = rfid_events;
+window.rfidDebug.storageEvents = function() { return rfid_storage_get('rfid_events', []); };
+window.rfidDebug.localStorage = function() { return JSON.parse(JSON.stringify(localStorage)); };
+window.rfidDebug.serverOk = rfid_server_ok;
+window.rfidDebug.noReader = rfid_no_reader;
+window.rfidDebug.pendingTarget = rfid_pending_target;
+window.rfidDebug.kohaTarget = rfid_koha_target;
+window.rfidDebug.alreadySubmitted = rfid_already_submitted;
+window.rfidDebug.submittedThisPage = rfid_submitted_this_page;
 
 function rfid_storage_get(key, def) {
 	var v = localStorage.getItem(key);
@@ -476,8 +489,9 @@ function rfid_scan(data) {
 
 				// -----------------------------------------------------------
 				// Step 2: skip if this barcode was already submitted on this page
+				// (returns page always re-submits to update date-last-seen)
 				// -----------------------------------------------------------
-				if ( rfid_already_submitted(t.content) ) {
+				if ( !returns && rfid_already_submitted(t.content) ) {
 					rfid_timeout = window.setTimeout( rfid_poll, 1000 );
 					return;
 				}
@@ -501,18 +515,19 @@ function rfid_scan(data) {
 				}
 
 				// -----------------------------------------------------------
-				// Step 4: Checkin (returns.pl) — submit to Koha once per state change
+				// Step 4: Checkin (returns.pl) — submit every book to update date-last-seen
 				// -----------------------------------------------------------
 				if ( returns ) {
-					// Only submit if Koha state doesn't already match the tag AFI.
-					var ks = rfid_koha_target(t.content);
-					if ( ks != sec ) {
-						var i = $('#barcode');
-						if ( i.val() != t.content ) {
-							i.val( t.content );
-							rfid_event_push(t.content, 'submit-checkin', sec);
-							i.closest('form').submit();
-						}
+					// Submit regardless of current AFI — Koha updates date-last-seen
+					// even for items already marked checked-in.
+					// Time-based dedup: skip if last submit-checkin was within 10s.
+					var lastSubmit = rfid_event_last(t.content, 'submit-checkin');
+					var shouldSubmit = !lastSubmit || (Date.now() - lastSubmit.time > 10000);
+					var i = $('#barcode');
+					if ( shouldSubmit && i.val() != t.content ) {
+						i.val( t.content );
+						rfid_event_push(t.content, 'submit-checkin', sec);
+						i.closest('form').submit();
 					}
 					rfid_timeout = window.setTimeout( rfid_poll, 1000 );
 					return;
@@ -556,9 +571,23 @@ function rfid_scan(data) {
 			}
 
 		} else {
-			var error = data.tags.length + ' tags near reader: ';
-			$.each( data.tags, function(i,tag) { error += tag.content + ' '; } );
-			body.text( error ).css( 'color', 'red' );
+			// Multiple tags — iterate and process the first unprocessed book
+			for ( var ti = 0; ti < data.tags.length; ti++ ) {
+				var t2 = data.tags[ti];
+				if ( t2.content.length == 0 ) continue;
+				if ( t2.content.substr(0,3) == '130' ) {
+					if ( !rfid_already_submitted(t2.content) ) {
+						// Process this single book; remaining tags will be picked up on next poll
+						data.tags = [ t2 ];
+						rfid_scan(data);
+						return;
+					}
+				}
+			}
+			// All tags already processed — just show count
+			var error = data.tags.length + ' tags (all processed)';
+			$.each( data.tags, function(i,tag) { error += ' ' + tag.content; } );
+			body.text( error ).css( 'color', '#888' );
 		}
 
 	} else {
