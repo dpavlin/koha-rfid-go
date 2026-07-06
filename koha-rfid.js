@@ -18,6 +18,7 @@
  */
 
 var RFID_VERSION = '1.0';  // version number for tracking
+var rfid_base_url = 'https://localhost:9000'; // override for mock-server testing
 var rfid_timeout = null;
 var rfid_poll_pending = false;
 var rfid_events = [];  // in-memory cache of recent events
@@ -203,7 +204,7 @@ function afi_color(sec) {
 // ---------------------------------------------------------------------------
 
 function rfid_secure(barcode, sid, target) {
-	var url = 'https://localhost:9000/secure.js?' + sid + '=' + target + '&callback=jsonp';
+	var url = rfid_base_url + '/secure.js?' + sid + '=' + target + '&callback=jsonp';
 	rfid_fetch(url, 15000).then(function(r) {
 		if ( r.status == 200 ) {
 			rfid_event_push(barcode, 'afi-write', target);
@@ -310,7 +311,7 @@ function rfid_fetch(url, timeout_ms) {
 }
 
 function rfid_check_server() {
-	return rfid_fetch('https://localhost:9000/ping', 3000).then(function(r) {
+	return rfid_fetch(rfid_base_url + '/ping', 3000).then(function(r) {
 		if ( r.ok ) return true;
 		throw new Error('HTTP ' + r.status);
 	}).catch(function(e) {
@@ -331,7 +332,7 @@ function rfid_poll() {
 			rfid_show_error('RFID server not responding (reader timeout)', true);
 		}, 20000);
 
-		rfid_fetch('https://localhost:9000/scan/', 15000).then(function(r) {
+		rfid_fetch(rfid_base_url + '/scan/', 15000).then(function(r) {
 			window.clearTimeout(timeout);
 			if ( r.ok ) return r.json();
 			throw new Error('HTTP ' + r.status);
