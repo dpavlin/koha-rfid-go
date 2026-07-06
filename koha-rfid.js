@@ -19,6 +19,8 @@ var RFID_VERSION = '1.0';  // version number for tracking
 var rfid_base_url = 'https://localhost:9000'; // override for mock-server testing
 var rfid_timeout = null;
 var rfid_poll_pending = false;
+var rfid_server_ok = false; // set after first successful ping
+var rfid_no_reader = localStorage.getItem('rfid_no_reader') == 'true'; // user opted out
 var rfid_events = [];  // in-memory cache of recent events
 var rfid_show_events = localStorage.getItem('rfid_show_events') == 'true';  // checkbox state
 
@@ -292,7 +294,32 @@ function rfid_show_error(msg, hint) {
 	var body = $('#rfid-popup-body');
 	if ( body.length == 0 ) body = rfid_create_popup();
 	var link = ' — <a href="https://localhost:9000" target="_blank" style="color:orange;text-decoration:underline">open https://localhost:9000</a> in a new tab and accept self-signed certificate';
-	body.html(msg + (hint ? link : '')).css('color', 'orange');
+	var buttons = '';
+	if (hint) {
+		buttons =
+			'<div style="margin-top:6px">' +
+				'<button id="rfid-retry-btn" style="cursor:pointer;background:#555;color:#fff;border:none;padding:3px 8px;border-radius:3px;margin-right:4px">retry</button>' +
+				'<button id="rfid-no-reader-btn" style="cursor:pointer;background:#555;color:#fff;border:none;padding:3px 8px;border-radius:3px">no reader</button>' +
+			'</div>';
+	}
+	body.html(msg + (hint ? link : '') + buttons).css('color', 'orange');
+	if (hint) {
+		$('#rfid-retry-btn').on('click', function() {
+			rfid_no_reader = false;
+			localStorage.removeItem('rfid_no_reader');
+			rfid_poll();
+		});
+		$('#rfid-no-reader-btn').on('click', function() {
+			rfid_no_reader = true;
+			localStorage.setItem('rfid_no_reader', 'true');
+			body.html('RFID disabled — <a href="#" id="rfid-enable-btn" style="color:orange;text-decoration:underline">enable</a>').css('color', '#888');
+			$('#rfid-enable-btn').on('click', function() {
+				rfid_no_reader = false;
+				localStorage.removeItem('rfid_no_reader');
+				rfid_poll();
+			});
+		});
+	}
 	rfid_event_update();
 }
 
@@ -310,7 +337,10 @@ function rfid_fetch(url, timeout_ms) {
 
 function rfid_check_server() {
 	return rfid_fetch(rfid_base_url + '/ping', 3000).then(function(r) {
-		if ( r.ok ) return true;
+		if ( r.ok ) {
+			rfid_server_ok = true;
+			return true;
+		}
 		throw new Error('HTTP ' + r.status);
 	}).catch(function(e) {
 		throw e;
@@ -319,12 +349,16 @@ function rfid_check_server() {
 
 function rfid_poll() {
 	if ( rfid_poll_pending ) return;
+	if ( rfid_no_reader ) return;
 	rfid_poll_pending = true;
 
 	var body = $('#rfid-popup-body');
 	if ( body.length == 0 ) body = rfid_create_popup();
 
-	rfid_check_server().then(function() {
+	// Ping once — after success skip it on subsequent polls
+	var ping = rfid_server_ok ? Promise.resolve(true) : rfid_check_server();
+
+	ping.then(function() {
 		var timeout = window.setTimeout(function() {
 			rfid_poll_pending = false;
 			rfid_show_error('RFID server not responding (reader timeout)', true);
