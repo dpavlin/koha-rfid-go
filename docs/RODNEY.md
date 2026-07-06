@@ -127,7 +127,7 @@ uvx rodney waitload
 ### 6. Check RFID polling
 
 The RFID JavaScript (`koha-rfid.js`) is served **from Koha itself** via the
-`intranetuserjs` system preference — it is **not** served by the RFID server.
+Koha plugin (`Koha::Plugin::Rot13::RFID`) — it is **not** served by the RFID server.
 It polls `https://localhost:9000/scan` and related endpoints.
 
 Start the mock RFID server (see `mock-rfid.md`) instead of the real reader:
@@ -263,7 +263,7 @@ uvx rodney text '#rfid-popup-body'                    # visible text
 ### Page reload and script injection
 
 - **`reload --hard`** clears the browser cache. If the RFID script is
-  injected via intranetuserjs `$.getScript(...)`, the hard reload may cause
+  injected by the Koha plugin, the hard reload may cause
   the script to not load (cache miss for the RFID server's HTTPS endpoint).
   Use `reload` (soft) or wait for the script to load after hard reload.
 

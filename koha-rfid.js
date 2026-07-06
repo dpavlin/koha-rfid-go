@@ -10,10 +10,8 @@
  * to provide overlay for tags in range and emulate form fill for Koha Library System
  * which allows check-in and checkout-operations without touching html interface
  *
- * You will have to inject remote javascript in Koha intranetuserjs using:
- *
- * // inject JavaScript RFID support
- * $.getScript('https://localhost:9000/examples/koha-rfid.js');
+ * This file is injected by the Koha plugin (Koha::Plugin::Rot13::RFID)
+ * only on RFID-relevant pages (circulation, returns, renew, mainpage).
  *
  */
 

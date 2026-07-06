@@ -20,11 +20,9 @@ scan.exe -port COM3
 koha-rfid.exe -port COM3 -listen localhost:9000
 ```
 
-Then inject [`koha-rfid.js`](examples/koha-rfid.js) into Koha's `intranetuserjs`:
+Then install the **Koha plugin** which injects [`koha-rfid.js`](plugin/Koha/Plugin/Rot13/RFID/koha-rfid.js) only on RFID-relevant pages (circulation, returns, renew, mainpage).
 
-```javascript
-$.getScript('http://localhost:9000/examples/koha-rfid.js');
-```
+Build the plugin KPZ and upload via Koha: Plugins → Upload plugin.
 
 ## Architecture
 
@@ -331,11 +329,7 @@ pause
 
 ## Koha JavaScript Integration
 
-Inject the existing `koha-rfid.js` into Koha's `intranetuserjs` (System Preferences → IntranetUserJS):
-
-```javascript
-$.getScript('http://localhost:9000/examples/koha-rfid.js');
-```
+The [`koha-rfid.js`](plugin/Koha/Plugin/Rot13/RFID/koha-rfid.js) is injected by the Koha plugin on RFID-relevant pages (circulation, returns, renew, mainpage).
 
 The script will:
 - Poll the RFID server every 1s
