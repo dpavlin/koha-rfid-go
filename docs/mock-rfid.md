@@ -13,16 +13,37 @@ go build -o cmd/mock-rfid/mock-rfid ./cmd/mock-rfid/
 
 ## Pointing the JS at the mock
 
-In `koha-rfid.js`, change `rfid_base_url`:
+The RFID JavaScript (`koha-rfid.js`) is served **from Koha itself** via the
+`intranetuserjs` system preference — it is **not** served by the RFID server.
+The `rfid_base_url` variable is set in that inlined script.
+
+To point the JS at the mock server you have two options:
+
+### Option A: Replace the real RFID server (port 9000)
+
+Stop the real RFID server and start the mock on port 9000 with TLS.
+The JS already points to `https://localhost:9000` — no changes needed.
+
+```bash
+# Stop real server
+pkill -f 'koha-rfid-go'
+
+# Start mock on port 9000 with TLS (uses existing rfid-localhost.* certs)
+./cmd/mock-rfid/mock-rfid -port 9000 -tls
+```
+
+### Option B: Use a different port + override in Koha admin
+
+Set `rfid_base_url` in Koha's `intranetuserjs` preference:
 
 ```js
 var rfid_base_url = 'http://localhost:9001';   // mock, no TLS needed
 ```
 
-If TLS is needed for testing, start with `-tls`:
+Then start the mock:
 
 ```bash
-./cmd/mock-rfid/mock-rfid -port 9001 -tls
+./cmd/mock-rfid/mock-rfid -port 9001
 ```
 
 ## Endpoints

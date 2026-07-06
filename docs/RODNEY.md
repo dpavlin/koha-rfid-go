@@ -7,12 +7,14 @@ to do next based on what you see.
 
 ## Setup
 
-Chrome must be running with `--remote-debugging-port=9333` (or your chosen port).
-Rodney connects to it; it does not launch Chrome itself.
+Chrome runs on another machine (or same machine with separate display) and its
+CDP port (`9333`) is tunneled via SSH to localhost. Rodney connects to the
+local tunnel; it does not launch Chrome itself.
 
 ```bash
 export CDP_PORT=9333                # default, can override
 export RODNEY_HOME=~/.rodney        # session state directory
+export PATH=$PATH:$HOME/.local/bin  # if uvx not found
 ```
 
 ## Basic commands
@@ -124,13 +126,17 @@ uvx rodney waitload
 
 ### 6. Check RFID polling
 
-The Koha page loads `koha-rfid.js` which polls `///localhost:9000/scan`.
-Start the RFID server first:
+The RFID JavaScript (`koha-rfid.js`) is served **from Koha itself** via the
+`intranetuserjs` system preference — it is **not** served by the RFID server.
+It polls `https://localhost:9000/scan` and related endpoints.
+
+Start the mock RFID server (see `mock-rfid.md`) instead of the real reader:
 
 ```bash
-RFID_PORT=/dev/ttyUSB0 go run . -scan
-# or in background:
-RFID_PORT=/dev/ttyUSB0 go run . &
+# Terminal 1: start mock server on port 9000 with TLS
+./cmd/mock-rfid/mock-rfid -port 9000 -tls
+
+# Or use HTTP on a different port and override rfid_base_url in Koha admin
 ```
 
 Then check RFID state:
@@ -350,11 +356,59 @@ When using the `edit` tool with `[upto]`:
 4. After fixing, the line numbers shift — re-read the file before relying
    on old line numbers for subsequent edits.
 
-## Example: full checkout workflow
+### Session expiration
+
+Koha sessions expire after ~20 minutes of inactivity. When the session expires:
+- The page redirects to the login page
+- rodney commands return "not logged in" or show the login form
+- The RFID JS stops polling (page changed)
+
+Check session status:
+```bash
+uvx rodney js 'document.querySelector(".loggedinusername")?document.querySelector(".loggedinusername").innerText:"not logged in"'
+```
+
+If expired, re-login manually in the browser or via rodney:
+```bash
+uvx rodney input 'input[name=userid]' your_username
+uvx rodney input 'input[name=password]' your_password
+uvx rodney click 'input#login'
+uvx rodney waitload
+```
+
+### Mock server integration
+
+Use the mock server (`cmd/mock-rfid`) to simulate RFID events during testing.
+The mock server endpoints are documented in `mock-rfid.md`.
+
+Basic workflow for testing on the circulation page:
 
 ```bash
-# Terminal 1: start RFID server
-RFID_PORT=/dev/ttyUSB0 go run . &
+# Terminal 1: start mock server on port 9000 with TLS
+./cmd/mock-rfid/mock-rfid -port 9000 -tls
+
+# Terminal 2: drive Chrome
+uvx rodney page 0                    # switch to circulation tab
+
+# Simulate patron card entering range
+curl -sk -X POST -d '{"sid":"e00401001f77fb98","content":"200000000042","security":"DA"}' \
+  https://localhost:9000/mock/tag
+uvx rodney sleep 3
+uvx rodney text '#rfid-popup-body'   # should show patron barcode
+
+# Simulate book entering range (checked in)
+curl -sk -X POST -d '{"sid":"e00401001f7812ed","content":"1301111111","security":"DA"}' \
+  https://localhost:9000/mock/tag
+uvx rodney sleep 3
+uvx rodney text '#rfid-popup-body'   # should show barcode + status
+uvx rodney js '(function(){var i=document.querySelector("input[name=barcode]");return i?i.value:"no field"})()'
+```
+
+## Example: full checkout workflow (with mock server)
+
+```bash
+# Terminal 1: start mock RFID server on port 9000 with TLS
+./cmd/mock-rfid/mock-rfid -port 9000 -tls
 
 # Terminal 2: drive Chrome
 uvx rodney open "https://ffzg.koha-dev.rot13.org:8443/cgi-bin/koha/mainpage.pl"
@@ -366,9 +420,17 @@ uvx rodney wait '#patron_results'
 uvx rodney click '#patron_results a'
 uvx rodney waitload
 
-# Now place a book with RFID tag on the reader.
-# The RFID JS should auto-fill the barcode and submit.
-uvx rodney sleep 5
-uvx rodney text '#rfid'
+# Simulate patron card on reader
+curl -sk -X POST -d '{"sid":"e00401001f77fb98","content":"200000000042","security":"DA"}' \
+  https://localhost:9000/mock/tag
+uvx rodney sleep 3
+uvx rodney text '#rfid-popup-body'
+uvx rodney js 'document.querySelector("input[name=barcode]").value'
+
+# Simulate book on reader (checked in)
+curl -sk -X POST -d '{"sid":"e00401001f7812ed","content":"1301111111","security":"DA"}' \
+  https://localhost:9000/mock/tag
+uvx rodney sleep 3
+uvx rodney text '#rfid-popup-body'
 uvx rodney js 'document.querySelector("input[name=barcode]").value'
 ```
