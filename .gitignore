@@ -19,3 +19,4 @@ cmd/mock-rfid/mock-rfid.exe
 *.swp
 rfid-localhost.*
 koha-rfid-go
+plugin/*.kpz
