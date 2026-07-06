@@ -1,6 +1,6 @@
 # Driving Koha RFID workflow with rodney
 
-[rodney](https://github.com/akavel/rodney) is a CLI tool for Chrome automation
+[rodney](https://github.com/simonw/rodney) is a CLI tool for Chrome automation
 via the Chrome DevTools Protocol (CDP). It lets you drive a real Chrome browser
 step by step from the command line — examine the page, interact, and decide what
 to do next based on what you see.
