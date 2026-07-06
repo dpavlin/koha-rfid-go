@@ -10,6 +10,7 @@
 //
 // Control endpoints (drive the simulation):
 //   POST /mock/tag      — add a tag  (JSON: {"sid":"16hex","content":"130...","security":"DA"})
+//   POST /mock/remove   — remove a tag by SID (JSON: {"sid":"16hex"})
 //   POST /mock/clear    — remove all tags
 //   POST /mock/error    — set error mode (JSON: {"count":N}) — next N /scan/ calls return 500
 //   POST /mock/timeout  — set timeout mode (JSON: {"count":N}) — next N /scan/ calls hang
@@ -175,6 +176,40 @@ func handleMockClear(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte(`{"ok":1}`))
 }
 
+func handleMockRemove(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "POST" {
+		http.Error(w, "POST required", 405)
+		return
+	}
+	var opts struct{ SID string }
+	if err := json.NewDecoder(r.Body).Decode(&opts); err != nil {
+		http.Error(w, err.Error(), 400)
+		return
+	}
+	if len(opts.SID) != 16 {
+		http.Error(w, "sid must be 16 hex chars", 400)
+		return
+	}
+
+	state.mu.Lock()
+	found := false
+	for i := range state.tags {
+		if strings.EqualFold(state.tags[i].SID, opts.SID) {
+			state.tags = append(state.tags[:i], state.tags[i+1:]...)
+			found = true
+			break
+		}
+	}
+	state.mu.Unlock()
+
+	if found {
+		w.WriteHeader(200)
+		w.Write([]byte(`{"ok":1}`))
+	} else {
+		http.Error(w, `{"ok":0,"error":"tag not found"}`, 404)
+	}
+}
+
 func handleMockError(w http.ResponseWriter, r *http.Request) {
 	if r.Method != "POST" {
 		http.Error(w, "POST required", 405)
@@ -299,6 +334,7 @@ func main() {
 	mux.HandleFunc("/scan/", handleScan)
 	mux.HandleFunc("/secure.js", handleSecureJSONP)
 	mux.HandleFunc("/mock/tag", handleMockTag)
+	mux.HandleFunc("/mock/remove", handleMockRemove)
 	mux.HandleFunc("/mock/clear", handleMockClear)
 	mux.HandleFunc("/mock/error", handleMockError)
 	mux.HandleFunc("/mock/timeout", handleMockTimeout)

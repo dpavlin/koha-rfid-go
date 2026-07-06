@@ -40,6 +40,7 @@ If TLS is needed for testing, start with `-tls`:
 | Endpoint | Method | Body (JSON) | Effect |
 |---|---|---|---|
 | `/mock/tag` | POST | `{"sid":"16hex","content":"130…","security":"DA"}` | Add one tag to inventory |
+| `/mock/remove` | POST | `{"sid":"16hex"}` | Remove one tag by SID |
 | `/mock/clear` | POST | — | Remove all tags |
 | `/mock/set` | POST | `[{"sid":"…","content":"…","security":"DA"},…]` | Replace entire inventory |
 | `/mock/error` | POST | `{"count":N}` | Next N `/scan/` calls return 500 |
@@ -134,7 +135,17 @@ curl -s -X POST -d '{"sid":"e00401001f77fb98","content":"200000000042","security
 
 → JS fills borrower search and submits.
 
-### 4. Book leaves range
+### 4. One book leaves range (others stay)
+
+Remove a single tag from inventory:
+
+```bash
+curl -s -X POST -d '{"sid":"e00401001f7812ed"}' http://localhost:9001/mock/remove
+```
+
+→ That barcode disappears from `/scan/`; other tags remain.
+
+### 5. All books leave range
 
 ```bash
 curl -s -X POST http://localhost:9001/mock/clear
@@ -142,7 +153,7 @@ curl -s -X POST http://localhost:9001/mock/clear
 
 → Next `/scan/` returns empty → JS shows "no tags in range".
 
-### 5. AFI write (checkin → D7)
+### 6. AFI write (checkin → D7)
 
 Add a DA book, then simulate the secure write that the JS performs:
 
