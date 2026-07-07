@@ -111,6 +111,29 @@ Fix: use getter functions for live values.
 
 ---
 
+---
+
+## Versioning Strategy
+
+### When to bump major version (RFID_VERSION)
+- **Architecture change**: replacing event log with AFI map (v1.0 → v2.0)
+- **Data format change**: localStorage keys/values change incompatibly
+- **Dedup logic change**: how we decide to submit or skip
+
+### When to bump minor version (RFID_VERSION)
+- **Bug fix**: wrong dedup condition, hoisting issue
+- **Parameter change**: timeout values, retention period
+- **Debug feature**: adding rfidDebug properties
+
+### Current version
+`RFID_VERSION = '2.0'` — major bump because:
+- Replaced persistent event log (`rfid_events`) with per-barcode AFI map (`rfid_afi`)
+- Old `rfid_events` localStorage key is deleted on startup
+- Dedup now compares tag AFI against stored AFI, not event history
+- Pending writes tracked via `pending` field in AFI map entry
+
+---
+
 ## rodney Command Reference
 
 | Command | Purpose |
