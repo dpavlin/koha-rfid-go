@@ -134,6 +134,93 @@ Fix: use getter functions for live values.
 
 ---
 
+---
+
+## Koha Include Paths for Perl Syntax Checks
+
+### Problem
+`deploy-plugin.sh` ran `perl -c` with `-I/srv/koha_ffzg/lib`, which failed because that directory does not exist:
+```
+Base class package "Koha::Plugins::Base" is empty.
+```
+
+### Root Cause
+The Koha source tree is at `/srv/koha_ffzg` (not `/srv/koha_ffzg/lib`). The Perl modules are at:
+- `/srv/koha_ffzg/Koha/Plugins/Base.pm` — plugin base class
+- `/srv/koha_ffzg/Koha/` — all Koha Perl modules
+- `/srv/koha_ffzg/C4/` — Koha circulation modules
+
+### Fix
+Use `-I/srv/koha_ffzg` (the parent of `Koha/` and `C4/`), not `-I/srv/koha_ffzg/lib`:
+```bash
+ssh koha-dev.rot13.org "sudo perl -I/var/lib/koha/ffzg/plugins -I/srv/koha_ffzg -c 'RFID.pm'"
+```
+
+### Verification
+```
+/var/lib/koha/ffzg/plugins/Koha/Plugin/Rot13/RFID.pm syntax OK
+```
+
+---
+
+## circulation-home.pl Support
+
+### Background
+`circulation-home.pl` is the modern Koha circulation page with tabbed UI. It has:
+- **Checkin tab** (`#checkin_search`) — returns form with `#ret_barcode`
+- **Renew tab** (`#renew_search`) — renew form with `#ren_barcode`
+- **Patron search tab** (`#circ_search`) — checkout after selecting a patron, uses `#barcode`
+
+### Tab Detection
+Tabs are jQuery UI tabs using `aria-hidden` to toggle visibility:
+```js
+var checkin_active   = $('#checkin_search').attr('aria-hidden') == 'false';
+var renew_active     = $('#renew_search').attr('aria-hidden') == 'false';
+var checkout_active  = $('#circ_search').attr('aria-hidden') == 'false';
+```
+
+### Visibility Checks
+Tabbed panels use `aria-hidden` for hiding/showing, not CSS `display: none`. jQuery's `:visible` selector **does** correctly reflect `aria-hidden` state — when a tab is active, elements inside it pass `:visible`; when hidden, they don't. So `i.is(':visible')` works reliably for tabbed panels.
+
+### Handling Logic
+On `circulation-home.pl` (detected by checking if `#header_search` length > 0):
+1. **Checkin tab active** → fill `#ret_barcode` (returns dedup logic, always submit)
+2. **Renew tab active** → fill `#ren_barcode` (renew logic, no AFI write)
+3. **Checkout tab active** → wait for patron search (`input[name=findborrower]` visible), then fill `#barcode`
+4. **Default tab** (patron search) → show book label, no form filling
+
+### SYNC Convention
+The plugin and JS file share a `// SYNC` comment marking the page list:
+- Plugin (`RFID.pm`): `@rfid_pages` list with `# SYNC`
+- JS (`koha-rfid.js`): `var rfid_pages` list with `// SYNC`
+
+Both lists must be kept in sync. Adding a new page requires updating both files.
+
+---
+
+## Storage Version Invalidation
+
+### Problem
+After a major version bump (`2.0 → 2.1`), old localStorage entries (AFI map) from a prior version could persist and cause stale dedup logic.
+
+### Solution
+Each version stores its version key in localStorage (`rfid_storage_version`). On page load:
+1. Read stored version
+2. If mismatch → clear all old keys (`rfid_afi`, `rfid_events`, etc.)
+3. Write current version
+
+### When to bump `RFID_VERSION`
+- **Major**: architecture change, data format change, dedup logic change
+- **Minor**: bug fix, parameter change, debug feature
+
+### Current version
+`RFID_VERSION = '2.1'` — minor bump because:
+- Added `circulation-home.pl` detection (no data format change)
+- Tab detection variables added (no storage change)
+- Version invalidation ensures stale AFI maps from v2.0 are cleared
+
+---
+
 ## rodney Command Reference
 
 | Command | Purpose |
