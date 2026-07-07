@@ -17,13 +17,13 @@
 
 // Bump RFID_VERSION when localStorage format changes (e.g., new fields in AFI map).
 // Old data will be invalidated on next page load automatically.
-var RFID_VERSION = '2.1';  // version number for tracking; v2.1 = submit field in AFI map
+var RFID_VERSION = '2.2';  // version number for tracking; v2.2 = tag-leave detection (last_seen sweep)
 var rfid_base_url = 'https://localhost:9000'; // override for mock-server testing
 var rfid_timeout = null;
 var rfid_poll_pending = false;
 var rfid_server_ok = false; // set after first successful ping
 var rfid_no_reader = localStorage.getItem('rfid_no_reader') == 'true'; // user opted out
-var rfid_show_afi = localStorage.getItem('rfid_show_afi') == 'true';  // checkbox state
+var rfid_show_afi = true;  // always show AFI map in popup
 var rfid_spinner_idx = 0;  // spinner frame counter
 
 // Debug namespace — exposed on window for rodney inspection
@@ -47,12 +47,13 @@ function rfid_storage_set(key, obj) {
 // AFI map — per-barcode state in localStorage (single source of truth)
 //
 // Key: rfid_afi
-// Value: { barcode: { sec: string, pending: string|null, submit: number|null, time: number } }
+// Value: { barcode: { sec: string, pending: string|null, submit: number|null, time: number, last_seen: number|null } }
 //
-//   sec     — last known AFI from tag (DA = checked in, D7 = on loan)
-//   pending — target AFI to write after a submit (null = no pending write)
-//   submit  — timestamp of last submit (used for time-based dedup on returns)
-//   time    — timestamp of last update (ms)
+//   sec       — last known AFI from tag (DA = checked in, D7 = on loan)
+//   pending   — target AFI to write after a submit (null = no pending write)
+//   submit    — timestamp of last submit (used for time-based dedup on returns)
+//   time      — timestamp of last update (ms)
+//   last_seen — timestamp when tag was last seen by reader (ms); null for legacy entries
 // ---------------------------------------------------------------------------
 
 // Get the AFI entry for a barcode, or null if not found
@@ -66,8 +67,38 @@ function rfid_afi_set(barcode, sec, pending) {
 	var map = rfid_storage_get('rfid_afi', {});
 	var now = Date.now();
 	var e = map[barcode] || {};
-	map[barcode] = { sec: sec, pending: pending || null, submit: e.submit || null, time: now };
+	map[barcode] = { sec: sec, pending: pending || null, submit: e.submit || null, time: now, last_seen: e.last_seen || null };
 	rfid_storage_set('rfid_afi', map);
+}
+
+// Update last_seen for a barcode (called when tag is visible in scan)
+function rfid_afi_set_last_seen(barcode) {
+	var map = rfid_storage_get('rfid_afi', {});
+	if (map[barcode]) {
+		map[barcode].last_seen = Date.now();
+		rfid_storage_set('rfid_afi', map);
+	}
+}
+
+// Sweep stale entries: delete AFI map entries where last_seen is >3 seconds old,
+// except for entries that are still visible in the current scan (visibleBarcodes set).
+// Also deletes legacy entries (no last_seen) if time is >3 seconds old.
+function rfid_afi_sweep_stale(visibleBarcodes) {
+	var map = rfid_storage_get('rfid_afi', {});
+	var now = Date.now();
+	var changed = false;
+	var limit = 3000; // 3 seconds
+	for (var key in map) {
+		// Skip entries for tags still on the reader
+		if (visibleBarcodes && visibleBarcodes.indexOf(key) >= 0) continue;
+		var e = map[key];
+		var age = now - (e.last_seen || e.time || 0);
+		if (age > limit) {
+			delete map[key];
+			changed = true;
+		}
+	}
+	if (changed) rfid_storage_set('rfid_afi', map);
 }
 
 // Mark a barcode as just submitted (sets submit timestamp for dedup)
@@ -156,49 +187,45 @@ function rfid_secure(barcode, sid, target) {
 // ---------------------------------------------------------------------------
 
 function rfid_popup_update() {
-	rfid_show_afi = $('#rfid-afi-check').prop('checked');
-	localStorage.setItem('rfid_show_afi', rfid_show_afi ? 'true' : 'false');
 	var log = $('#rfid-afi-log');
-	if ( rfid_show_afi ) {
-		var map = rfid_storage_get('rfid_afi', {});
-		var html = '';
-		var count = 0;
-		for (var key in map) {
-			count++;
-			var e = map[key];
-			var t = new Date(e.time);
-			var h = t.getHours().toString().padStart(2, '0');
-			var m = t.getMinutes().toString().padStart(2, '0');
-			var s = t.getSeconds().toString().padStart(2, '0');
-			var submitInfo = '';
-			if (e.submit) {
-				var sub = new Date(e.submit);
-				var subH = sub.getHours().toString().padStart(2, '0');
-				var subM = sub.getMinutes().toString().padStart(2, '0');
-				submitInfo = ' submitted ' + subH + ':' + subM;
-			}
-			html += '<div>' + h + ':' + m + ':' + s + ' ' + key + ' ' + e.sec +
-				(e.pending ? ' &rarr; ' + e.pending : '') + submitInfo + '</div>';
+	var map = rfid_storage_get('rfid_afi', {});
+	var html = '';
+	var count = 0;
+	for (var key in map) {
+		count++;
+		var e = map[key];
+		var t = new Date(e.time);
+		var h = t.getHours().toString().padStart(2, '0');
+		var m = t.getMinutes().toString().padStart(2, '0');
+		var s = t.getSeconds().toString().padStart(2, '0');
+		var submitInfo = '';
+		if (e.submit) {
+			var sub = new Date(e.submit);
+			var subH = sub.getHours().toString().padStart(2, '0');
+			var subM = sub.getMinutes().toString().padStart(2, '0');
+			submitInfo = ' submitted ' + subH + ':' + subM;
 		}
-		if (count == 0) html = '<span style="color:#888">(no entries)</span>';
-		if ( log.length == 0 ) {
-			var body = $('#rfid-popup-body');
-			var el = body[0];
-			if ( el ) el.insertAdjacentHTML('afterend',
-				'<div id="rfid-afi-log" style="font-size:11px; line-height:1.4; max-height:200px; overflow-y:auto; border-top:1px solid #555; padding-top:4px; margin-top:4px">' +
-				html + '</div>');
-		} else {
-			log.html(html);
+		var lastSeen = '';
+		if (e.last_seen) {
+			var age = Math.round((Date.now() - e.last_seen) / 1000);
+			lastSeen = ' seen ' + age + 's ago';
 		}
+		html += '<div>' + h + ':' + m + ':' + s + ' ' + key + ' ' + e.sec +
+			(e.pending ? ' &rarr; ' + e.pending : '') + submitInfo + lastSeen + '</div>';
+	}
+	if (count == 0) html = '<span style="color:#888">(no entries)</span>';
+	if ( log.length == 0 ) {
+		var body = $('#rfid-popup-body');
+		var el = body[0];
+		if ( el ) el.insertAdjacentHTML('afterend', html);
 	} else {
-		log.remove();
+		log.html(html);
 	}
 }
 
 function rfid_create_popup() {
 	var saved = localStorage.getItem('rfid_popup_pos');
 	var pos = saved ? JSON.parse(saved) : { top: 10, right: 10 };
-	var checked = rfid_show_afi ? ' checked' : '';
 	var html =
 		'<div id="rfid-popup" style="' +
 			'position:fixed; z-index:9999;' +
@@ -211,10 +238,9 @@ function rfid_create_popup() {
 			'<div id="rfid-popup-header" style="font-weight:bold; margin-bottom:4px;">RFID v' + RFID_VERSION +
 				' <span id="rfid-spinner" style="color:#888"></span></div>' +
 			'<div id="rfid-popup-body">—</div>' +
+			'<div id="rfid-afi-log" style="font-size:11px; line-height:1.4; max-height:200px; overflow-y:auto; border-top:1px solid #555; padding-top:4px; margin-top:4px"></div>' +
 			'<div style="font-size:10px; margin-top:4px; opacity:0.6">' +
-				'<label style="color:#aaa; cursor:pointer">' +
-					'<input type="checkbox" id="rfid-afi-check"' + checked + '> AFI map' +
-				'</label>' +
+				'<button id="rfid-reset-btn" title="Clear all scanned tags (force re-scan)" style="cursor:pointer;background:#555;color:#fff;border:none;padding:1px 6px;border-radius:3px;font-size:11px">↻ reset</button>' +
 			'</div>' +
 		'</div>';
 
@@ -251,12 +277,11 @@ function rfid_create_popup() {
 		}
 	});
 
-	$('#rfid-afi-check').on('change', function(e) {
+	// Reset button — clear all AFI map entries so tags can be re-scanned
+	$('#rfid-reset-btn').on('click', function() {
+		localStorage.removeItem('rfid_afi');
 		rfid_popup_update();
 	});
-
-	// Show AFI map immediately if checkbox was checked on page load
-	rfid_popup_update();
 
 	return $('#rfid-popup-body');
 }
@@ -405,6 +430,14 @@ function rfid_scan(data) {
 	var renew_active    = $('#renew_search').attr('aria-hidden') == 'false';
 
 	if ( data.tags && data.tags.length > 0 ) {
+		// Update last_seen for all visible tags — sweep will clear stale ones
+		var visibleBarcodes = [];
+		for (var vi = 0; vi < data.tags.length; vi++) {
+			var bc = data.tags[vi].content;
+			visibleBarcodes.push(bc);
+			rfid_afi_set_last_seen(bc);
+		}
+
 		if ( data.tags.length === 1 ) {
 			var t = data.tags[0];
 
@@ -622,6 +655,9 @@ function rfid_scan(data) {
 		body.text( 'no tags in range' ).css('color','gray');
 	}
 
+	// Sweep stale entries — tags that left the reader >3 seconds ago are cleared
+	// so they can be re-scanned immediately when placed again.
+	rfid_afi_sweep_stale(visibleBarcodes || []);
 	rfid_popup_update();
 	rfid_timeout = window.setTimeout( rfid_poll, 1000 );
 }
