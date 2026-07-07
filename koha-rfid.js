@@ -15,7 +15,9 @@
  *
  */
 
-var RFID_VERSION = '2.0';  // version number for tracking
+// Bump RFID_VERSION when localStorage format changes (e.g., new fields in AFI map).
+// Old data will be invalidated on next page load automatically.
+var RFID_VERSION = '2.1';  // version number for tracking; v2.1 = submit field in AFI map
 var rfid_base_url = 'https://localhost:9000'; // override for mock-server testing
 var rfid_timeout = null;
 var rfid_poll_pending = false;
@@ -570,6 +572,12 @@ function rfid_scan(data) {
 }
 
 $(document).ready( function() {
+	// Check storage version — invalidate AFI map if code format changed
+	var storedVer = localStorage.getItem('rfid_storage_version');
+	if ( storedVer != RFID_VERSION ) {
+		localStorage.removeItem('rfid_afi');
+		localStorage.setItem('rfid_storage_version', RFID_VERSION);
+	}
 	rfid_afi_cleanup();
 	// Remove old event log key (migrated to AFI map in v2.0)
 	localStorage.removeItem('rfid_events');

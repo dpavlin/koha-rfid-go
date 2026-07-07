@@ -18,6 +18,9 @@ if [ ! -f "$SRC" ]; then
     exit 1
 fi
 
+echo "  Syntax check:"
+node --check "$SRC" && echo "    OK — no syntax errors" || { echo "    FAIL — syntax errors found, aborting"; exit 1; }
+
 scp "$SRC" "$DST_HOST:$DST_PATH"
 ssh "$DST_HOST" "sudo chown ffzg-koha:ffzg-koha '$DST_PATH'"
 ssh "$DST_HOST" "sudo systemctl restart koha-plack"
