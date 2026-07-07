@@ -255,6 +255,9 @@ function rfid_create_popup() {
 		rfid_popup_update();
 	});
 
+	// Show AFI map immediately if checkbox was checked on page load
+	rfid_popup_update();
+
 	return $('#rfid-popup-body');
 }
 
