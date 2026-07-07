@@ -21,22 +21,17 @@ var rfid_timeout = null;
 var rfid_poll_pending = false;
 var rfid_server_ok = false; // set after first successful ping
 var rfid_no_reader = localStorage.getItem('rfid_no_reader') == 'true'; // user opted out
-var rfid_events = [];  // in-memory event log for popup display only (not persisted)
-var rfid_show_events = localStorage.getItem('rfid_show_events') == 'true';  // checkbox state
+var rfid_show_afi = localStorage.getItem('rfid_show_afi') == 'true';  // checkbox state
+var rfid_spinner_idx = 0;  // spinner frame counter
 
 // Debug namespace — exposed on window for rodney inspection
 window.rfidDebug = {};
 
-// In-memory set of barcodes already submitted on this page load (prevents re-submit loops)
-var rfid_submitted_this_page = {};
-
 // Expose key variables for rodney inspection
-window.rfidDebug.events = rfid_events;
 window.rfidDebug.afiMap = function() { return rfid_storage_get('rfid_afi', {}); };
 window.rfidDebug.localStorage = function() { return JSON.parse(JSON.stringify(localStorage)); };
 window.rfidDebug.serverOk = rfid_server_ok;
 window.rfidDebug.noReader = rfid_no_reader;
-window.rfidDebug.submittedThisPage = rfid_submitted_this_page;
 
 function rfid_storage_get(key, def) {
 	var v = localStorage.getItem(key);
@@ -47,7 +42,7 @@ function rfid_storage_set(key, obj) {
 }
 
 // ---------------------------------------------------------------------------
-// AFI map — per-barcode state in localStorage
+// AFI map — per-barcode state in localStorage (single source of truth)
 //
 // Key: rfid_afi
 // Value: { barcode: { sec: string, pending: string|null, time: number } }
@@ -55,9 +50,6 @@ function rfid_storage_set(key, obj) {
 //   sec     — last known AFI from tag (DA = checked in, D7 = on loan)
 //   pending — target AFI to write after a submit (null = no pending write)
 //   time    — timestamp of last update (ms)
-//
-// The AFI map replaces the event log for dedup and pending-write tracking.
-// Events are kept in-memory only for popup display.
 // ---------------------------------------------------------------------------
 
 // Get the AFI entry for a barcode, or null if not found
@@ -98,62 +90,23 @@ function rfid_afi_cleanup() {
 }
 
 // ---------------------------------------------------------------------------
-// In-memory event log (for popup display only, not persisted)
+// Spinner — ASCII progress indicator / | \ -
 // ---------------------------------------------------------------------------
 
-function rfid_event_push(barcode, action, detail) {
-	// Skip consecutive duplicate scan events for the same barcode
-	if ( action == 'scan' ) {
-		var last = rfid_events.length ? rfid_events[rfid_events.length - 1] : null;
-		if ( last && last.barcode == barcode && last.action == 'scan' && last.detail == detail ) {
-			rfid_events[rfid_events.length - 1].time = Date.now(); // update timestamp in memory
-			return;
-		}
-	}
-	rfid_events.push({ time: Date.now(), barcode: barcode, action: action, detail: detail });
-	rfid_events = rfid_events.slice(-20);
+function rfid_spinner() {
+	var chars = ['/', '|', '\\', '-'];
+	rfid_spinner_idx = (rfid_spinner_idx + 1) % 4;
+	return chars[rfid_spinner_idx];
 }
 
-function rfid_event_format(e) {
-	var t = new Date(e.time);
-	var h = t.getHours().toString().padStart(2, '0');
-	var m = t.getMinutes().toString().padStart(2, '0');
-	var s = t.getSeconds().toString().padStart(2, '0');
-	return h + ':' + m + ':' + s + ' ' + e.barcode + ' ' + e.action + (e.detail ? ': ' + e.detail : '');
+function rfid_spinner_show() {
+	var s = $('#rfid-spinner');
+	if ( s.length ) s.text( rfid_spinner() );
 }
 
-function rfid_event_update() {
-	rfid_show_events = $('#rfid-events-check').prop('checked');
-	localStorage.setItem('rfid_show_events', rfid_show_events ? 'true' : 'false');
-	var body = $('#rfid-popup-body');
-	var log = $('#rfid-events-log');
-	if ( rfid_show_events ) {
-		if ( log.length == 0 ) {
-			var html = '<div id="rfid-events-log" style="font-size:11px; line-height:1.4; max-height:200px; overflow-y:auto; border-top:1px solid #555; padding-top:4px; margin-top:4px">';
-			if ( rfid_events.length == 0 ) {
-				html += '<span style="color:#888">(no recent events)</span>';
-			} else {
-				for ( var i = rfid_events.length - 1; i >= 0; i-- ) {
-					html += '<div>' + rfid_event_format(rfid_events[i]) + '</div>';
-				}
-			}
-			html += '</div>';
-			var el = body[0];
-			if ( el ) el.insertAdjacentHTML('afterend', html);
-		} else {
-			var html = '';
-			if ( rfid_events.length == 0 ) {
-				html = '<span style="color:#888">(no recent events)</span>';
-			} else {
-				for ( var i = rfid_events.length - 1; i >= 0; i-- ) {
-					html += '<div>' + rfid_event_format(rfid_events[i]) + '</div>';
-				}
-			}
-			log.html(html);
-		}
-	} else {
-		log.remove();
-	}
+function rfid_spinner_hide() {
+	var s = $('#rfid-spinner');
+	if ( s.length ) s.text('');
 }
 
 // ---------------------------------------------------------------------------
@@ -178,13 +131,10 @@ function rfid_secure(barcode, sid, target) {
 	var url = rfid_base_url + '/secure.js?' + sid + '=' + target + '&callback=jsonp';
 	rfid_fetch(url, 15000).then(function(r) {
 		if ( r.status == 200 ) {
-			rfid_event_push(barcode, 'afi-write', target);
 			rfid_afi_clear_pending(barcode);
-		} else {
-			rfid_event_push(barcode, 'afi-write', 'error ' + r.status);
 		}
 	}).catch(function(e) {
-		rfid_event_push(barcode, 'afi-write', 'error: ' + e.message);
+		// write failed — pending stays set, next scan will retry
 	});
 }
 
@@ -192,18 +142,43 @@ function rfid_secure(barcode, sid, target) {
 // Popup
 // ---------------------------------------------------------------------------
 
-function rfid_show_popup_body() {
-	var body = $('#rfid-popup-body');
-	var text = body.data('last-text') || '—';
-	var color = body.data('last-color') || 'gray';
-	body.text(text).css('color', color);
-	rfid_event_update();
+function rfid_popup_update() {
+	rfid_show_afi = $('#rfid-afi-check').prop('checked');
+	localStorage.setItem('rfid_show_afi', rfid_show_afi ? 'true' : 'false');
+	var log = $('#rfid-afi-log');
+	if ( rfid_show_afi ) {
+		var map = rfid_storage_get('rfid_afi', {});
+		var html = '';
+		var count = 0;
+		for (var key in map) {
+			count++;
+			var e = map[key];
+			var t = new Date(e.time);
+			var h = t.getHours().toString().padStart(2, '0');
+			var m = t.getMinutes().toString().padStart(2, '0');
+			var s = t.getSeconds().toString().padStart(2, '0');
+			html += '<div>' + h + ':' + m + ':' + s + ' ' + key + ' ' + e.sec +
+				(e.pending ? ' &rarr; ' + e.pending : '') + '</div>';
+		}
+		if (count == 0) html = '<span style="color:#888">(no entries)</span>';
+		if ( log.length == 0 ) {
+			var body = $('#rfid-popup-body');
+			var el = body[0];
+			if ( el ) el.insertAdjacentHTML('afterend',
+				'<div id="rfid-afi-log" style="font-size:11px; line-height:1.4; max-height:200px; overflow-y:auto; border-top:1px solid #555; padding-top:4px; margin-top:4px">' +
+				html + '</div>');
+		} else {
+			log.html(html);
+		}
+	} else {
+		log.remove();
+	}
 }
 
 function rfid_create_popup() {
 	var saved = localStorage.getItem('rfid_popup_pos');
 	var pos = saved ? JSON.parse(saved) : { top: 10, right: 10 };
-	var checked = rfid_show_events ? ' checked' : '';
+	var checked = rfid_show_afi ? ' checked' : '';
 	var html =
 		'<div id="rfid-popup" style="' +
 			'position:fixed; z-index:9999;' +
@@ -213,11 +188,12 @@ function rfid_create_popup() {
 			'cursor:move; box-shadow:2px 2px 8px rgba(0,0,0,0.4);' +
 			'min-width:200px;' +
 		'">' +
-			'<div id="rfid-popup-header" style="font-weight:bold; margin-bottom:4px;">RFID reader v' + RFID_VERSION + '</div>' +
+			'<div id="rfid-popup-header" style="font-weight:bold; margin-bottom:4px;">RFID v' + RFID_VERSION +
+				' <span id="rfid-spinner" style="color:#888"></span></div>' +
 			'<div id="rfid-popup-body">—</div>' +
 			'<div style="font-size:10px; margin-top:4px; opacity:0.6">' +
 				'<label style="color:#aaa; cursor:pointer">' +
-					'<input type="checkbox" id="rfid-events-check"' + checked + '> events' +
+					'<input type="checkbox" id="rfid-afi-check"' + checked + '> AFI map' +
 				'</label>' +
 			'</div>' +
 		'</div>';
@@ -255,8 +231,8 @@ function rfid_create_popup() {
 		}
 	});
 
-	$('#rfid-events-check').on('change', function(e) {
-		rfid_event_update();
+	$('#rfid-afi-check').on('change', function(e) {
+		rfid_popup_update();
 	});
 
 	return $('#rfid-popup-body');
@@ -292,7 +268,7 @@ function rfid_show_error(msg, hint) {
 			});
 		});
 	}
-	rfid_event_update();
+	rfid_popup_update();
 }
 
 function rfid_fetch(url, timeout_ms) {
@@ -327,12 +303,16 @@ function rfid_poll() {
 	var body = $('#rfid-popup-body');
 	if ( body.length == 0 ) body = rfid_create_popup();
 
+	// Show spinner
+	rfid_spinner_show();
+
 	// Ping once — after success skip it on subsequent polls
 	var ping = rfid_server_ok ? Promise.resolve(true) : rfid_check_server();
 
 	ping.then(function() {
 		var timeout = window.setTimeout(function() {
 			rfid_poll_pending = false;
+			rfid_spinner_hide();
 			rfid_show_error('RFID server not responding (reader timeout)', true);
 		}, 20000);
 
@@ -342,15 +322,18 @@ function rfid_poll() {
 			throw new Error('HTTP ' + r.status);
 		}).then(function(data) {
 			rfid_poll_pending = false;
+			rfid_spinner_hide();
 			rfid_scan(data);
 		}).catch(function(e) {
 			window.clearTimeout(timeout);
 			rfid_poll_pending = false;
+			rfid_spinner_hide();
 			rfid_show_error('RFID scan error: ' + e.message, true);
 			rfid_timeout = window.setTimeout( rfid_poll, 5000 );
 		});
 	}).catch(function(e) {
 		rfid_poll_pending = false;
+		rfid_spinner_hide();
 		var msg = 'RFID server not reachable';
 		if ( e.name == 'TypeError' || e.message.indexOf('Failed to fetch') >= 0 ) {
 			msg += ' (connection refused or TLS error)';
@@ -367,7 +350,7 @@ function rfid_poll() {
 // ---------------------------------------------------------------------------
 // rfid_scan — the main RFID scan handler
 //
-// Order of operations (AFI map is the source of truth):
+// Order of operations (AFI map is the single source of truth):
 //
 // 1. PENDING AFI RESOLUTION:
 //    If the AFI map has a pending target for this barcode and the tag AFI
@@ -375,7 +358,7 @@ function rfid_poll() {
 //
 // 2. STATE CHECK:
 //    If the tag AFI matches the stored AFI in the map, no state change
-//    occurred — skip submission (book already processed).
+//    occurred — skip submission.
 //
 // 3. NEW SUBMISSION:
 //    Otherwise, submit the form and update the AFI map.
@@ -414,8 +397,6 @@ function rfid_scan(data) {
 				var color = afi_color(sec);
 				body.text( t.content + ' (' + label + ')' ).css('color', color);
 
-				rfid_event_push(t.content, 'scan', sec);
-
 				// -----------------------------------------------------------
 				// Step 1: resolve any pending AFI write from a previous page load
 				// -----------------------------------------------------------
@@ -437,9 +418,8 @@ function rfid_scan(data) {
 
 				// -----------------------------------------------------------
 				// Step 2: skip if AFI hasn't changed since last submission
-				// (returns page always re-submits to update date-last-seen)
 				// -----------------------------------------------------------
-				if ( entry && entry.sec == sec && !returns ) {
+				if ( entry && entry.sec == sec ) {
 					rfid_timeout = window.setTimeout( rfid_poll, 1000 );
 					return;
 				}
@@ -452,7 +432,6 @@ function rfid_scan(data) {
 						var i = $('#ren_barcode');
 						if ( i.val() != t.content ) {
 							i.val( t.content );
-							rfid_event_push(t.content, 'submit-renew', sec);
 							rfid_afi_set(t.content, sec, null); // no AFI change needed
 							i.closest('form').submit();
 						}
@@ -472,7 +451,6 @@ function rfid_scan(data) {
 						var i = $('#barcode');
 						if ( i.val() != t.content ) {
 							i.val( t.content );
-							rfid_event_push(t.content, 'submit-checkin', sec);
 							rfid_afi_set(t.content, sec, 'DA'); // pending AFI write to DA
 							i.closest('form').submit();
 						}
@@ -494,7 +472,6 @@ function rfid_scan(data) {
 							var i = $('input[name=barcode]:last');
 							if ( i.val() != t.content ) {
 								i.val( t.content );
-								rfid_event_push(t.content, 'submit-checkout', sec);
 								rfid_afi_set(t.content, sec, 'D7'); // pending AFI write to D7
 								i.closest('form').submit();
 							}
@@ -516,7 +493,6 @@ function rfid_scan(data) {
 				body.text( t.content ).css('color', 'blue' );
 				var patronEntry = rfid_afi_get(t.content);
 				if ( !patronEntry || patronEntry.sec != 'patron' ) {
-					rfid_event_push(t.content, 'patron-scan', '');
 					rfid_afi_set(t.content, 'patron', null);
 					$('input[name=findborrower]').val( t.content )
 						.parent().submit();
@@ -549,7 +525,7 @@ function rfid_scan(data) {
 		body.text( 'no tags in range' ).css('color','gray');
 	}
 
-	rfid_event_update();
+	rfid_popup_update();
 	rfid_timeout = window.setTimeout( rfid_poll, 1000 );
 }
 
