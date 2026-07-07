@@ -45,8 +45,10 @@ sub intranet_js {
     my $uri = $ENV{SCRIPT_NAME} || $ENV{REQUEST_URI} || '';
 
     # Pages that need RFID support
+    # SYNC: keep in sync with page detection in koha-rfid.js (rfid_scan)
     my @rfid_pages = (
-        'circulation.pl',
+        'circulation.pl',      # also matches circulation-home.pl (substring)
+        'circulation-home.pl', # explicit entry for sync clarity
         'returns.pl',
         'renew.pl',
         'mainpage.pl',

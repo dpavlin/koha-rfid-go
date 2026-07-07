@@ -397,15 +397,21 @@ function rfid_scan(data) {
 	var body = $('#rfid-popup-body');
 	if ( body.length == 0 ) body = rfid_create_popup();
 
-	var checkin_active = $('#checkin_search').attr('aria-hidden') == 'false';
-	var checkout_active = $('#checkout_search').attr('aria-hidden') == 'false';
+	// Tab detection — different Koha pages use different tab ids.
+	// On circulation-home.pl: checkout tab is #circ_search, renew tab is #renew_search.
+	var checkin_active  = $('#checkin_search').attr('aria-hidden') == 'false';
+	var checkout_active = $('#checkout_search').attr('aria-hidden') == 'false' ||
+	                     $('#circ_search').attr('aria-hidden') == 'false';
+	var renew_active    = $('#renew_search').attr('aria-hidden') == 'false';
 
 	if ( data.tags && data.tags.length > 0 ) {
 		if ( data.tags.length === 1 ) {
 			var t = data.tags[0];
 
 			var url = document.location.toString();
-			var circulation = url.indexOf('circulation.pl') >= 0;
+			// SYNC: keep in sync with @rfid_pages in RFID.pm
+			var circulation = url.indexOf('circulation.pl') >= 0;      // also matches circulation-home.pl (substring)
+			var circulation_home = url.indexOf('circulation-home.pl') >= 0;
 			var returns = url.indexOf('returns.pl') >= 0;
 			var renew = url.indexOf('renew.pl') >= 0;
 
@@ -454,7 +460,7 @@ function rfid_scan(data) {
 				if ( renew ) {
 					if ( sec == 'D7' ) {
 						var i = $('#ren_barcode');
-						if ( i.val() != t.content ) {
+						if ( i.is(':visible') && i.val() != t.content ) {
 							i.val( t.content );
 							rfid_afi_set(t.content, sec, null); // no AFI change needed
 							i.closest('form').submit();
@@ -491,7 +497,7 @@ function rfid_scan(data) {
 					var shouldSubmit = !entry || !entry.submit || (now - entry.submit > 10000);
 					if ( shouldSubmit ) {
 						var i = $('#barcode');
-						if ( i.val() != t.content ) {
+						if ( i.is(':visible') && i.val() != t.content ) {
 							i.val( t.content );
 							// Set pending only if book was on loan (D7 → need to write DA)
 							var pending = (sec == 'D7') ? 'DA' : null;
@@ -507,22 +513,66 @@ function rfid_scan(data) {
 				}
 
 				// -----------------------------------------------------------
-				// Step 5: Circulation (checkout) — only if tag says checked in
+				// Step 5: Circulation (checkout/checkin tabs)
+				//
+				// circulation.pl       — #mainform with #barcode for checkout
+				// circulation-home.pl  — tabbed: checkin (#ret_barcode) or checkout (patron search)
 				// -----------------------------------------------------------
 				if ( circulation ) {
-					if ( sec == 'DA' ) {
-						var is_checkout = checkout_active || (!checkin_active && circulation);
-						var is_checkin = checkin_active || returns;
-						if ( is_checkout ) {
-							var i = $('input[name=barcode]:last');
-							if ( i.val() != t.content ) {
+					if ( circulation_home ) {
+						// circulation-home.pl — tabs switch visible forms
+						if ( checkin_active ) {
+							// Checkin tab → returns form (#ret_barcode), same logic as Step 4
+							var now = Date.now();
+							var shouldSubmit = !entry || !entry.submit || (now - entry.submit > 10000);
+							if ( shouldSubmit ) {
+								var i = $('#ret_barcode');
+								if ( i.is(':visible') && i.val() != t.content ) {
+									i.val( t.content );
+									var pending = (sec == 'D7') ? 'DA' : null;
+									rfid_afi_set(t.content, sec, pending);
+									rfid_afi_set_submit(t.content);
+									i.closest('form').submit();
+								}
+							} else {
+								body.text( t.content + ' (already submitted)' ).css('color', 'blue');
+							}
+						} else if ( renew_active && sec == 'D7' ) {
+							// Renew tab — #ren_barcode, same logic as Step 3
+							var i = $('#ren_barcode');
+							if ( i.is(':visible') && i.val() != t.content ) {
 								i.val( t.content );
-								rfid_afi_set(t.content, sec, 'D7'); // pending AFI write to D7
+								rfid_afi_set(t.content, sec, null);
 								i.closest('form').submit();
 							}
+						} else if ( checkout_active && sec == 'DA' ) {
+							// Checkout tab — use #barcode if visible (after patron selection)
+							var i = $('#barcode');
+							if ( i.length > 0 && i.is(':visible') && i.val() != t.content ) {
+								i.val( t.content );
+								rfid_afi_set(t.content, sec, 'D7');
+								i.closest('form').submit();
+							} else {
+								body.text( t.content + ' (' + label + ')' ).css('color', color);
+							}
+						} else {
+							body.text( t.content + ' (' + label + ')' ).css('color', color);
 						}
 					} else {
-						body.text( t.content + ' (not checked in — cannot checkout)' ).css('color', 'blue');
+						// circulation.pl — checkout form with #barcode
+						if ( sec == 'DA' ) {
+							var is_checkout = checkout_active || (!checkin_active && circulation);
+							if ( is_checkout ) {
+								var i = $('#barcode');
+								if ( i.length > 0 && i.is(':visible') && i.val() != t.content ) {
+									i.val( t.content );
+									rfid_afi_set(t.content, sec, 'D7'); // pending AFI write to D7
+									i.closest('form').submit();
+								}
+							}
+						} else {
+							body.text( t.content + ' (not checked in — cannot checkout)' ).css('color', 'blue');
+						}
 					}
 					rfid_timeout = window.setTimeout( rfid_poll, 1000 );
 					return;
@@ -539,8 +589,10 @@ function rfid_scan(data) {
 				var patronEntry = rfid_afi_get(t.content);
 				if ( !patronEntry || patronEntry.sec != 'patron' ) {
 					rfid_afi_set(t.content, 'patron', null);
-					$('input[name=findborrower]').val( t.content )
-						.parent().submit();
+					var pb = $('input[name=findborrower]');
+					if ( pb.is(':visible') ) {
+						pb.val( t.content ).parent().submit();
+					}
 				}
 			}
 
