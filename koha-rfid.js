@@ -23,8 +23,9 @@ var rfid_timeout = null;
 var rfid_poll_pending = false;
 var rfid_server_ok = false; // set after first successful ping
 var rfid_no_reader = localStorage.getItem('rfid_no_reader') == 'true'; // user opted out
-var rfid_show_afi = true;  // always show AFI map in popup
+
 var rfid_spinner_idx = 0;  // spinner frame counter
+
 
 // Debug namespace — exposed on window for rodney inspection
 window.rfidDebug = {};
@@ -189,31 +190,34 @@ function rfid_secure(barcode, sid, target) {
 function rfid_popup_update() {
 	var log = $('#rfid-afi-log');
 	var map = rfid_storage_get('rfid_afi', {});
-	var html = '';
-	var count = 0;
+	var now = Date.now();
+	var visible = [], gone = [];
 	for (var key in map) {
-		count++;
 		var e = map[key];
-		var t = new Date(e.time);
-		var h = t.getHours().toString().padStart(2, '0');
-		var m = t.getMinutes().toString().padStart(2, '0');
-		var s = t.getSeconds().toString().padStart(2, '0');
-		var submitInfo = '';
-		if (e.submit) {
-			var sub = new Date(e.submit);
-			var subH = sub.getHours().toString().padStart(2, '0');
-			var subM = sub.getMinutes().toString().padStart(2, '0');
-			submitInfo = ' submitted ' + subH + ':' + subM;
+		var age = now - (e.last_seen || 0);
+		if (e.last_seen && age < 2000) {
+			visible.push({ key: key, e: e, last_seen: e.last_seen });
+		} else {
+			gone.push({ key: key, e: e, age: age });
 		}
-		var lastSeen = '';
-		if (e.last_seen) {
-			var age = Math.round((Date.now() - e.last_seen) / 1000);
-			lastSeen = ' seen ' + age + 's ago';
-		}
-		html += '<div>' + h + ':' + m + ':' + s + ' ' + key + ' ' + e.sec +
-			(e.pending ? ' &rarr; ' + e.pending : '') + submitInfo + lastSeen + '</div>';
 	}
-	if (count == 0) html = '<span style="color:#888">(no entries)</span>';
+	visible.sort(function(a, b) { return b.last_seen - a.last_seen; });
+	var html = '';
+	for (var vi = 0; vi < visible.length; vi++) {
+		var v = visible[vi];
+		html += '<div style="color:#fff">' + v.key + ' ' + v.e.sec +
+			(v.e.pending ? ' &rarr; ' + v.e.pending : '') + '</div>';
+	}
+	for (var gi = 0; gi < gone.length; gi++) {
+		var g = gone[gi];
+		var secs = Math.round(g.age / 1000);
+		var remaining = 3 - secs;
+		if (remaining <= 0) continue;
+		html += '<div style="color:#888">' + g.key + ' ' + g.e.sec +
+			(g.e.pending ? ' &rarr; ' + g.e.pending : '') +
+			' (' + remaining + 's)</div>';
+	}
+	if (html == '') html = '<span style="color:#888">(no tags)</span>';
 	if ( log.length == 0 ) {
 		var body = $('#rfid-popup-body');
 		var el = body[0];
