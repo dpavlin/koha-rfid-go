@@ -21,7 +21,7 @@ fi
 scp "$SRC" "$DST_HOST:$DST_PATH"
 
 echo "  Syntax check (on remote after deploy):"
-ssh "$DST_HOST" "sudo perl -I/var/lib/koha/ffzg/plugins -I/srv/koha_ffzg/lib -c '$DST_PATH'" \
+ssh "$DST_HOST" "sudo perl -I/var/lib/koha/ffzg/plugins -I/srv/koha_ffzg -c '$DST_PATH'" \
   && echo "    OK — no syntax errors" \
   || echo "    (note: Koha dependency warnings are expected outside Koha context)"
 ssh "$DST_HOST" "sudo chown ffzg-koha:ffzg-koha '$DST_PATH'"
