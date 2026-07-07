@@ -81,7 +81,7 @@ function rfid_event_push(barcode, action, detail) {
 function rfid_event_cleanup() {
 	var events = rfid_storage_get('rfid_events', []);
 	var now = Date.now();
-	var keep = events.filter(function(e) { return now - e.time < 86400000; });
+	var keep = events.filter(function(e) { return now - e.time < 3600000; }); // 1 hour retention
 	if ( keep.length != events.length ) {
 		rfid_storage_set('rfid_events', keep);
 	}
