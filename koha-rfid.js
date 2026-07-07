@@ -45,10 +45,11 @@ function rfid_storage_set(key, obj) {
 // AFI map — per-barcode state in localStorage (single source of truth)
 //
 // Key: rfid_afi
-// Value: { barcode: { sec: string, pending: string|null, time: number } }
+// Value: { barcode: { sec: string, pending: string|null, submit: number|null, time: number } }
 //
 //   sec     — last known AFI from tag (DA = checked in, D7 = on loan)
 //   pending — target AFI to write after a submit (null = no pending write)
+//   submit  — timestamp of last submit (used for time-based dedup on returns)
 //   time    — timestamp of last update (ms)
 // ---------------------------------------------------------------------------
 
@@ -61,11 +62,21 @@ function rfid_afi_get(barcode) {
 // Set/update the AFI entry for a barcode
 function rfid_afi_set(barcode, sec, pending) {
 	var map = rfid_storage_get('rfid_afi', {});
-	map[barcode] = { sec: sec, pending: pending || null, time: Date.now() };
+	var now = Date.now();
+	var e = map[barcode] || {};
+	map[barcode] = { sec: sec, pending: pending || null, submit: e.submit || null, time: now };
 	rfid_storage_set('rfid_afi', map);
 }
 
-// Clear the pending flag for a barcode (write completed)
+// Mark a barcode as just submitted (sets submit timestamp for dedup)
+function rfid_afi_set_submit(barcode) {
+	var map = rfid_storage_get('rfid_afi', {});
+	if (map[barcode]) {
+		map[barcode].submit = Date.now();
+		rfid_storage_set('rfid_afi', map);
+	}
+}
+
 function rfid_afi_clear_pending(barcode) {
 	var map = rfid_storage_get('rfid_afi', {});
 	if (map[barcode]) {
@@ -157,8 +168,15 @@ function rfid_popup_update() {
 			var h = t.getHours().toString().padStart(2, '0');
 			var m = t.getMinutes().toString().padStart(2, '0');
 			var s = t.getSeconds().toString().padStart(2, '0');
+			var submitInfo = '';
+			if (e.submit) {
+				var sub = new Date(e.submit);
+				var subH = sub.getHours().toString().padStart(2, '0');
+				var subM = sub.getMinutes().toString().padStart(2, '0');
+				submitInfo = ' submitted ' + subH + ':' + subM;
+			}
 			html += '<div>' + h + ':' + m + ':' + s + ' ' + key + ' ' + e.sec +
-				(e.pending ? ' &rarr; ' + e.pending : '') + '</div>';
+				(e.pending ? ' &rarr; ' + e.pending : '') + submitInfo + '</div>';
 		}
 		if (count == 0) html = '<span style="color:#888">(no entries)</span>';
 		if ( log.length == 0 ) {
@@ -418,8 +436,9 @@ function rfid_scan(data) {
 
 				// -----------------------------------------------------------
 				// Step 2: skip if AFI hasn't changed since last submission
+				// (returns page has its own time-based dedup — see Step 4)
 				// -----------------------------------------------------------
-				if ( entry && entry.sec == sec ) {
+				if ( entry && entry.sec == sec && !returns ) {
 					rfid_timeout = window.setTimeout( rfid_poll, 1000 );
 					return;
 				}
@@ -444,18 +463,39 @@ function rfid_scan(data) {
 
 				// -----------------------------------------------------------
 				// Step 4: Checkin (returns.pl)
-				// Submit only if tag AFI is D7 (on loan) — DA means already checked in
+				//
+				// Workflow: library staff processes ALL returned books on this page
+				// regardless of AFI state. Koha updates the date-last-seen for every
+				// book placed on the reader — this is essential for shelf management.
+				//
+				// Both DA (checked in) and D7 (on loan) books are submitted:
+				//   - D7 → Koha performs a real check-in (state change)
+				//   - DA → Koha shows "already checked in" but still updates date-last-seen
+				//
+				// Dedup: each book is submitted only once per 10-second window.
+				// The submit timestamp is persisted in localStorage so it survives
+				// page reloads. If the same book is placed again after 10s, it will
+				// re-submit — which is fine (date-last-seen refresh).
+				//
+				// The pending AFI write (D7→DA) is set only for books that were
+				// on loan (D7), so the tag gets updated after a real check-in.
 				// -----------------------------------------------------------
 				if ( returns ) {
-					if ( sec == 'D7' ) {
+					// Time-based dedup: skip if last submit was within 10 seconds
+					var now = Date.now();
+					var shouldSubmit = !entry || !entry.submit || (now - entry.submit > 10000);
+					if ( shouldSubmit ) {
 						var i = $('#barcode');
 						if ( i.val() != t.content ) {
 							i.val( t.content );
-							rfid_afi_set(t.content, sec, 'DA'); // pending AFI write to DA
+							// Set pending only if book was on loan (D7 → need to write DA)
+							var pending = (sec == 'D7') ? 'DA' : null;
+							rfid_afi_set(t.content, sec, pending);
+							rfid_afi_set_submit(t.content);
 							i.closest('form').submit();
 						}
 					} else {
-						body.text( t.content + ' (already checked in)' ).css('color', 'blue');
+						body.text( t.content + ' (already submitted)' ).css('color', 'blue');
 					}
 					rfid_timeout = window.setTimeout( rfid_poll, 1000 );
 					return;
