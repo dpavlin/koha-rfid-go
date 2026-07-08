@@ -520,76 +520,6 @@ func TestHandleProgramError(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// Background scan tests
-
-func TestBackgroundScan(t *testing.T) {
-	m := mockOps{
-		inventoryFn: func() ([]string, error) {
-			return []string{"E2001234567890AB"}, nil
-		},
-		readAfiFn: func(tag string) (byte, error) {
-			return 0xDA, nil
-		},
-		readBlocksFn: func(tag string, start, count int) (map[int]string, error) {
-			return map[int]string{0: "3133303132333435", 1: "3637000000000000"}, nil
-		},
-	}
-	server := newTestServerWithOps(m)
-
-	if err := server.BackgroundScan(); err != nil {
-		t.Fatalf("BackgroundScan error: %v", err)
-	}
-
-	server.mu.Lock()
-	info, ok := server.tagCache["E2001234567890AB"]
-	server.mu.Unlock()
-	if !ok {
-		t.Error("tag not found in cache after scan")
-	} else if info.SID != "E2001234567890AB" {
-		t.Errorf("SID = %q, want %q", info.SID, "E2001234567890AB")
-	}
-}
-
-func TestBackgroundScanStaleRemoval(t *testing.T) {
-	m := mockOps{
-		inventoryFn: func() ([]string, error) {
-			return []string{}, nil // no tags → stale should be removed
-		},
-	}
-	server := newTestServerWithOps(m)
-
-	// Seed cache with a stale tag
-	server.mu.Lock()
-	server.tagCache["STALE1234567890"] = &rfidops.TagInfo{SID: "STALE1234567890"}
-	server.mu.Unlock()
-
-	if err := server.BackgroundScan(); err != nil {
-		t.Fatalf("BackgroundScan error: %v", err)
-	}
-
-	server.mu.Lock()
-	_, ok := server.tagCache["STALE1234567890"]
-	server.mu.Unlock()
-	if ok {
-		t.Error("stale tag should have been removed from cache")
-	}
-}
-
-func TestBackgroundScanError(t *testing.T) {
-	m := mockOps{
-		inventoryFn: func() ([]string, error) {
-			return nil, fmt.Errorf("mock inventory error")
-		},
-	}
-	server := newTestServerWithOps(m)
-
-	err := server.BackgroundScan()
-	if err == nil {
-		t.Error("expected error from BackgroundScan, got nil")
-	}
-}
-
-// ---------------------------------------------------------------------------
 // NewHttpServer tests
 
 func TestNewHttpServer(t *testing.T) {
@@ -603,9 +533,6 @@ func TestNewHttpServer(t *testing.T) {
 	}
 	if server.rfidOps == nil {
 		t.Errorf("rfidOps should be non-nil")
-	}
-	if server.tagCache == nil {
-		t.Errorf("tagCache should be initialized")
 	}
 }
 

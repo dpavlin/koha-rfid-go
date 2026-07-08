@@ -6,7 +6,6 @@ import (
 	"log"
 	"net/http"
 	"strings"
-	"sync"
 	"time"
 
 	"koha-rfid/internal/rfidops"
@@ -26,13 +25,11 @@ func (lw *loggingResponseWriter) WriteHeader(code int) {
 
 // HttpServer provides the local JSONP API for the Koha JavaScript integration.
 type HttpServer struct {
-	listen   string
-	mu       sync.Mutex
-	rfidOps  rfidops.RfidOps
-	debug    bool
-	tagCache map[string]*rfidops.TagInfo
-	tlsCert  string // path to TLS cert (if empty, serve HTTP)
-	tlsKey   string // path to TLS key
+	listen  string
+	rfidOps rfidops.RfidOps
+	debug   bool
+	tlsCert string // path to TLS cert (if empty, serve HTTP)
+	tlsKey  string // path to TLS key
 }
 
 func NewHttpServer(listen string, ops rfidops.RfidOps, debug bool) *HttpServer {
@@ -40,7 +37,6 @@ func NewHttpServer(listen string, ops rfidops.RfidOps, debug bool) *HttpServer {
 		listen:   listen,
 		rfidOps:  ops,
 		debug:    debug,
-		tagCache: make(map[string]*rfidops.TagInfo),
 	}
 }
 
@@ -155,14 +151,6 @@ func (s *HttpServer) handleScan(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Update cache
-	s.mu.Lock()
-	for _, info := range result.Tags {
-		infoCopy := info
-		s.tagCache[info.SID] = &infoCopy
-	}
-	s.mu.Unlock()
-
 	// Build JSON response
 	type tagItem struct {
 		SID      string `json:"sid"`
@@ -261,31 +249,4 @@ func (s *HttpServer) handleProgram(w http.ResponseWriter, r *http.Request) {
 	writeJSONP(w, callback, jsonBody)
 }
 
-// ---------------------------------------------------------------------------
-// Background scan – called from main.go, not a handler
-func (s *HttpServer) BackgroundScan() error {
-	result, err := rfidops.Scan(s.rfidOps)
-	if err != nil {
-		return err
-	}
 
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	for _, info := range result.Tags {
-		infoCopy := info
-		s.tagCache[info.SID] = &infoCopy
-	}
-
-	// Remove stale tags
-	seen := make(map[string]bool, len(result.Tags))
-	for _, info := range result.Tags {
-		seen[info.SID] = true
-	}
-	for sid := range s.tagCache {
-		if !seen[sid] {
-			delete(s.tagCache, sid)
-		}
-	}
-	return nil
-}
