@@ -27,7 +27,6 @@ import (
 	"net/http"
 	"strings"
 	"sync"
-	"time"
 )
 
 // ---------------------------------------------------------------------------
@@ -65,12 +64,8 @@ func handleScan(w http.ResponseWriter, r *http.Request) {
 	tc := state.timeoutCount
 	state.mu.Unlock()
 
-	// Timeout mode — hang until the browser's fetch timeout fires
+	// Timeout mode — return 504 immediately so browser shows timeout error
 	if tc > 0 {
-		state.mu.Lock()
-		state.timeoutCount--
-		state.mu.Unlock()
-		time.Sleep(30 * time.Second) // longer than browser's 15s fetch timeout
 		w.WriteHeader(504)
 		w.Write([]byte(`{"error":"timeout"}`))
 		return
@@ -170,6 +165,8 @@ func handleMockClear(w http.ResponseWriter, r *http.Request) {
 	}
 	state.mu.Lock()
 	state.tags = nil
+	state.errorCount = 0
+	state.timeoutCount = 0
 	state.mu.Unlock()
 
 	w.WriteHeader(200)

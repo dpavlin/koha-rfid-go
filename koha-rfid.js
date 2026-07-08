@@ -26,6 +26,7 @@ var rfid_no_reader = localStorage.getItem('rfid_no_reader') == 'true'; // user o
 
 var rfid_spinner_idx = 0;  // spinner frame counter
 
+var rfid_error_active = false;   // prevents recursive error/timeout popups
 
 // Debug namespace — exposed on window for rodney inspection
 window.rfidDebug = {};
@@ -34,7 +35,9 @@ window.rfidDebug = {};
 window.rfidDebug.afiMap = function() { return rfid_storage_get('rfid_afi', {}); };
 window.rfidDebug.localStorage = function() { return JSON.parse(JSON.stringify(localStorage)); };
 window.rfidDebug.serverOk = rfid_server_ok;
-window.rfidDebug.noReader = rfid_no_reader;
+window.rfidDebug.pollPending = function() { return rfid_poll_pending; };
+window.rfidDebug.timeout = function() { return rfid_timeout; };
+window.rfidDebug.noReader = function() { return rfid_no_reader; };
 
 function rfid_storage_get(key, def) {
 	var v = localStorage.getItem(key);
@@ -68,7 +71,7 @@ function rfid_afi_set(barcode, sec, pending) {
 	var map = rfid_storage_get('rfid_afi', {});
 	var now = Date.now();
 	var e = map[barcode] || {};
-	map[barcode] = { sec: sec, pending: pending || null, submit: e.submit || null, time: now, last_seen: e.last_seen || null };
+	map[barcode] = { sec: sec, pending: pending || null, submit: e.submit || null, time: now, last_seen: e.last_seen || now };
 	rfid_storage_set('rfid_afi', map);
 }
 
@@ -188,6 +191,8 @@ function rfid_secure(barcode, sid, target) {
 // ---------------------------------------------------------------------------
 
 function rfid_popup_update() {
+	// If an error is active, don't overwrite the error message with AFI content
+	if (rfid_error_active) return;
 	var log = $('#rfid-afi-log');
 	var map = rfid_storage_get('rfid_afi', {});
 	var now = Date.now();
@@ -303,6 +308,7 @@ function rfid_show_error(msg, hint) {
 			'</div>';
 	}
 	body.html(msg + (hint ? link : '') + buttons).css('color', 'orange');
+	rfid_error_active = true;
 	if (hint) {
 		$('#rfid-retry-btn').on('click', function() {
 			rfid_no_reader = false;
@@ -320,7 +326,8 @@ function rfid_show_error(msg, hint) {
 			});
 		});
 	}
-	rfid_popup_update();
+	// Do NOT call rfid_popup_update() here — it would overwrite the error message
+	// with AFI map content. The next poll cycle will update the popup.
 }
 
 function rfid_fetch(url, timeout_ms) {
@@ -348,9 +355,11 @@ function rfid_check_server() {
 }
 
 function rfid_poll() {
+	console.log('rfid_poll: pending=' + rfid_poll_pending + ' noReader=' + rfid_no_reader + ' serverOk=' + rfid_server_ok);
 	if ( rfid_poll_pending ) return;
 	if ( rfid_no_reader ) return;
 	rfid_poll_pending = true;
+	console.log('rfid_poll: poll_pending set to true');
 
 	var body = $('#rfid-popup-body');
 	if ( body.length == 0 ) body = rfid_create_popup();
@@ -375,16 +384,24 @@ function rfid_poll() {
 		}).then(function(data) {
 			rfid_poll_pending = false;
 			rfid_spinner_hide();
+			console.log('rfid_poll: scan response, pending=false, calling rfid_scan');
 			rfid_scan(data);
 		}).catch(function(e) {
 			window.clearTimeout(timeout);
 			rfid_poll_pending = false;
 			rfid_spinner_hide();
-			rfid_show_error('RFID scan error: ' + e.message, true);
+			var errorMsg = 'RFID scan error: ' + e.message;
+			if (e.message.indexOf('abort') >= 0 || e.message.indexOf('timeout') >= 0) {
+				errorMsg = 'RFID scan error: timeout';
+			} else if (e.message.indexOf('504') >= 0) {
+				errorMsg = 'RFID scan error: timeout';
+			}
+			rfid_show_error(errorMsg, true);
 			rfid_timeout = window.setTimeout( rfid_poll, 5000 );
 		});
 	}).catch(function(e) {
 		rfid_poll_pending = false;
+		console.log('rfid_poll: catch ping error, pending=false');
 		rfid_spinner_hide();
 		var msg = 'RFID server not reachable';
 		if ( e.name == 'TypeError' || e.message.indexOf('Failed to fetch') >= 0 ) {
@@ -422,6 +439,11 @@ function rfid_poll() {
 // ---------------------------------------------------------------------------
 
 function rfid_scan(data) {
+	console.log('rfid_scan: called with ' + (data.tags ? data.tags.length + ' tags' : 'no tags') + ', pending=' + rfid_poll_pending);
+
+	// Clear error flag on successful scan — error messages should only show
+	// while the server is failing. Once we get a successful response, show tags.
+	rfid_error_active = false;
 
 	var body = $('#rfid-popup-body');
 	if ( body.length == 0 ) body = rfid_create_popup();
@@ -662,8 +684,11 @@ function rfid_scan(data) {
 	// Sweep stale entries — tags that left the reader >3 seconds ago are cleared
 	// so they can be re-scanned immediately when placed again.
 	rfid_afi_sweep_stale(visibleBarcodes || []);
+	console.log('rfid_scan: calling rfid_popup_update');
 	rfid_popup_update();
+	console.log('rfid_scan: scheduling next poll in 1s, pending=' + rfid_poll_pending);
 	rfid_timeout = window.setTimeout( rfid_poll, 1000 );
+	console.log('rfid_scan: done');
 }
 
 $(document).ready( function() {
