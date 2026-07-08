@@ -3,7 +3,6 @@ package main
 import (
 	"encoding/json"
 	"fmt"
-	"log"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -24,20 +23,19 @@ import (
 //   RFID_PORT=/dev/ttyUSB0 go test -v -run 'Integration' -timeout 60s
 // ---------------------------------------------------------------------------
 
-func rfidPort() string {
+func rfidPortFromEnv() string {
 	return os.Getenv("RFID_PORT")
 }
 
 func skipIfNoHardware(t *testing.T) {
-	port := rfidPort()
+	port := rfidPortFromEnv()
 	if port == "" {
 		t.Skip("Skipping integration test: set RFID_PORT env var to a serial port with a 3M 810 reader")
 	}
 }
 
-// openReader opens the RFID reader for integration tests.
 func openReader(t *testing.T) *rfid.RfidReader {
-	port := rfidPort()
+	port := rfidPortFromEnv()
 	reader, err := rfid.NewRfidReader(port, false)
 	if err != nil {
 		t.Fatalf("open RFID reader on %s: %v", port, err)
@@ -351,10 +349,4 @@ func TestIntegrationHandleProgram(t *testing.T) {
 // ---------------------------------------------------------------------------
 // Helper to run integration tests with logging
 
-func TestMain(m *testing.M) {
-	port := os.Getenv("RFID_PORT")
-	if port != "" {
-		log.Printf("RFID_PORT=%s — integration tests will use real hardware", port)
-	}
-	os.Exit(m.Run())
-}
+

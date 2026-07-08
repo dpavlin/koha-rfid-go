@@ -126,8 +126,8 @@ func TestBrowserRFIDIntegration(t *testing.T) {
 	cdpAddr := fmt.Sprintf("localhost:%s", cdpPort())
 
 	// Connect to existing Chrome via remote debugging
-	allocCtx, allocCancel := chromedp.NewRemoteBrowser(context.Background(),
-		fmt.Sprintf("ws://%s/devtools/browser/%s", cdpAddr, ""), nil)
+	allocCtx, allocCancel := chromedp.NewRemoteAllocator(context.Background(),
+		fmt.Sprintf("http://%s", cdpAddr))
 	defer allocCancel()
 
 	tabCtx, tabCancel := chromedp.NewContext(allocCtx)
@@ -206,8 +206,8 @@ func TestBrowserRFIDCirculation(t *testing.T) {
 
 	cdpAddr := fmt.Sprintf("localhost:%s", cdpPort())
 
-	allocCtx, allocCancel := chromedp.NewRemoteBrowser(context.Background(),
-		fmt.Sprintf("ws://%s/devtools/browser/%s", cdpAddr, ""), nil)
+	allocCtx, allocCancel := chromedp.NewRemoteAllocator(context.Background(),
+		fmt.Sprintf("http://%s", cdpAddr))
 	defer allocCancel()
 
 	tabCtx, tabCancel := chromedp.NewContext(allocCtx)

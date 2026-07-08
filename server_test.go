@@ -58,6 +58,16 @@ func (m mockOps) WriteAfi(tag string, afi byte) error {
 	return nil
 }
 
+func (m mockOps) InventoryWithReset() ([]string, error) {
+	if m.inventoryFn != nil {
+		return m.inventoryFn()
+	}
+	return nil, nil
+}
+
+func (m mockOps) Lock()    {}
+func (m mockOps) Unlock()  {}
+
 // ---------------------------------------------------------------------------
 // Helpers
 
