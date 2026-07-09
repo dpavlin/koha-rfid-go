@@ -21,17 +21,17 @@ TAGS="$(cat tests/tags.json)"
 PAGES="$(cat tests/pages.json)"
 SCENARIOS="$(cat tests/scenarios.json)"
 
-# ──────────────────────────────────────────────────────────────────
+# ------------------------------------------------------------------
 # Logging
-# ──────────────────────────────────────────────────────────────────
-pass()  { echo "  ✓ $*"; }
-fail()  { echo "  ✗ $*"; record_result "$PAGE" "$SCENARIO_ID" "fail"; return 1; }
+# ------------------------------------------------------------------
+pass()  { echo "  OK $*"; }
+fail()  { echo "  FAIL $*"; record_result "$PAGE" "$SCENARIO_ID" "fail"; return 1; }
 info()  { echo "  - $*"; }
 result(){ local s="$1"; record_result "$PAGE" "$SCENARIO_ID" "$s"; }
 
-# ──────────────────────────────────────────────────────────────────
+# ------------------------------------------------------------------
 # RFID server detection
-# ──────────────────────────────────────────────────────────────────
+# ------------------------------------------------------------------
 RFID_HOST="${RFID_HOST:-localhost}"
 RFID_PORT="${RFID_PORT:-9000}"
 
@@ -57,11 +57,11 @@ check_rfid_server() {
     return 0
 }
 
-# ──────────────────────────────────────────────────────────────────
+# ------------------------------------------------------------------
 # Mock server — delegates to server.sh for clean start/stop with logging.
 # If a mock-mode server is already running, skip start and stop (leave it for other tests).
 # If a real reader is running, stop it first so mock can take over.
-# ──────────────────────────────────────────────────────────────────
+# ------------------------------------------------------------------
 mock_start() {
     # Check server.sh status — it prints mode (mock or real)
     local status
@@ -86,9 +86,9 @@ mock_error() { curl -sk -X POST -d "{\"count\":$1}" "$MOCK_URL/mock/error" >/dev
 mock_timeout() { curl -sk -X POST -d "{\"count\":$1}" "$MOCK_URL/mock/timeout" >/dev/null 2>&1; }
 mock_remove() { curl -sk -X POST -d "{\"sid\":\"$1\"}" "$MOCK_URL/mock/remove" >/dev/null 2>&1; }
 
-# ──────────────────────────────────────────────────────────────────
+# ------------------------------------------------------------------
 # rodney
-# ──────────────────────────────────────────────────────────────────
+# ------------------------------------------------------------------
 rodney() { uvx rodney "$@" 2>&1; }
 
 koha_login() {
@@ -133,9 +133,9 @@ tab_switch() {
     rodney sleep 1
 }
 
-# ──────────────────────────────────────────────────────────────────
+# ------------------------------------------------------------------
 # Tags
-# ──────────────────────────────────────────────────────────────────
+# ------------------------------------------------------------------
 load_tag() {
     local key="$1"
     local sid content security
@@ -151,44 +151,41 @@ load_tag() {
     mock_add "$sid" "$content" "$security"
 }
 
-# ──────────────────────────────────────────────────────────────────
+# ------------------------------------------------------------------
 # Results
-# ──────────────────────────────────────────────────────────────────
+# ------------------------------------------------------------------
 record_result() {
     local page="$1" sid="$2" status="$3"
     echo "$page.$sid=$status" >> "$RESULTS_FILE"
 }
 
-# ──────────────────────────────────────────────────────────────────
+# ------------------------------------------------------------------
+# Debug helper — prints commands and HTML dump for interactive debugging
+# ------------------------------------------------------------------
+debug_help() {
+    local url; url=$(rodney url 2>/dev/null || echo "unknown")
+    echo ""
+    echo "  [══ Debug ---------------------------------------------]"
+    echo "  |  To inspect interactively:                          |"
+    echo "  |    rodney '$url'                                    |"
+    echo "  |    rodney js 'document.querySelector(\"*\");'         |"
+    echo "  |    rodney html                                      |"
+    echo "  [══════════════════════════════════════════════════════]"
+    echo ""
+    echo "  -- HTML dump --"
+    rodney html 2>/dev/null | head -100 || echo "  [no HTML output]"
+    echo ""
+    echo "  -- localStorage rfid_afi --"
+    rodney js 'JSON.stringify(localStorage.getItem("rfid_afi"))' 2>/dev/null || echo "  [no data]"
+    echo ""
+    echo "  -- rfidDebug --"
+    rodney js 'JSON.stringify(window.rfidDebug || {})' 2>/dev/null || echo "  [no debug object]"
+    echo ""
+}
+
+# ------------------------------------------------------------------
 # DOM checks
-# ──────────────────────────────────────────────────────────────────
-check_popup_empty() {
-    local text; text=$(rodney text '#rfid-popup-body' 2>/dev/null || echo "")
-    if echo "$text" | grep -qiE '(no tags|empty|no RFID|no tags found)' 2>/dev/null; then
-        pass "popup: no tags"; return 0
-    fi
-    if [ -z "$(echo "$text" | tr -d '[:space:]')" ]; then
-        pass "popup: empty"; return 0
-    fi
-    fail "popup unexpected: $text"; return 1
-}
-
-check_popup_contains() {
-    local text; text=$(rodney text '#rfid-popup-body' 2>/dev/null || echo "")
-    if echo "$text" | grep -qi "$1" 2>/dev/null; then
-        pass "popup contains '$1'"; return 0
-    fi
-    fail "popup expected '$1' but got: $text"; return 1
-}
-
-check_input_filled() {
-    local value; value=$(rodney js "document.querySelector('$1')?.value || ''" 2>/dev/null || echo "")
-    if [ -n "$value" ] && [ "$value" != "null" ]; then
-        pass "input $1 filled: $value"; return 0
-    fi
-    fail "input $1 not filled"; return 1
-}
-
+[upto]
 check_db() {
     local result; result=$(koha_mysql "$1" 2>/dev/null || echo "")
     if echo "$result" | grep -q "$2" 2>/dev/null; then
@@ -197,20 +194,20 @@ check_db() {
     fail "DB expected '$2' but got: $result"; return 1
 }
 
-# ──────────────────────────────────────────────────────────────────
+# ------------------------------------------------------------------
 # Helper to run koha-mysql queries via SSH (handles quoting properly)
-# ──────────────────────────────────────────────────────────────────
+# ------------------------------------------------------------------
 koha_mysql() {
     local sql="$1"
     ssh koha-dev.rot13.org "sudo /usr/sbin/koha-mysql ffzg -e '$sql'" 2>/dev/null
 }
 
-# ──────────────────────────────────────────────────────────────────
+# ------------------------------------------------------------------
 # Pre-flight checks — verify Koha DB state before running tests
-# ──────────────────────────────────────────────────────────────────
+# ------------------------------------------------------------------
 pre_flight_check() {
     echo ""
-    echo "── Pre-flight checks ──"
+    echo "-- Pre-flight checks --"
 
     # Clean up any leftover issues from previous runs first
     cleanup_issues
@@ -219,9 +216,9 @@ pre_flight_check() {
     local patron
     patron=$(koha_mysql "SELECT COUNT(*) FROM borrowers WHERE cardnumber='200000000042'" || echo "")
     if echo "$patron" | grep -q "1"; then
-        echo "  ✓ patron 200000000042 exists"
+        echo "  OK patron 200000000042 exists"
     else
-        echo "  ✗ patron 200000000042 not found"
+        echo "  FAIL patron 200000000042 not found"
         return 1
     fi
 
@@ -230,9 +227,9 @@ pre_flight_check() {
         local exists
         exists=$(koha_mysql "SELECT COUNT(*) FROM items WHERE barcode='$bc'" || echo "")
         if echo "$exists" | grep -q "1"; then
-            echo "  ✓ barcode $bc exists in items"
+            echo "  OK barcode $bc exists in items"
         else
-            echo "  ✗ barcode $bc not found in items"
+            echo "  FAIL barcode $bc not found in items"
             return 1
         fi
     done
@@ -242,23 +239,23 @@ pre_flight_check() {
         local issued
         issued=$(koha_mysql "SELECT COUNT(*) FROM issues JOIN items USING (itemnumber) WHERE items.barcode='$bc'" || echo "")
         if echo "$issued" | grep -q "0"; then
-            echo "  ✓ barcode $bc is not issued — clean"
+            echo "  OK barcode $bc is not issued — clean"
         else
-            echo "  ✗ barcode $bc is currently issued — state not reproducible"
+            echo "  FAIL barcode $bc is currently issued — state not reproducible"
             return 1
         fi
     done
 
-    echo "── Pre-flight OK ──"
+    echo "-- Pre-flight OK --"
     return 0
 }
 
-# ──────────────────────────────────────────────────────────────────
+# ------------------------------------------------------------------
 # Cleanup — revert Koha DB state to original (delete issues created by tests)
-# ──────────────────────────────────────────────────────────────────
+# ------------------------------------------------------------------
 cleanup_issues() {
     echo ""
-    echo "── Cleanup ──"
+    echo "-- Cleanup --"
     # Delete only test patron's issues for our specific test books
     local patron_id
     patron_id=$(koha_mysql "SELECT borrowernumber FROM borrowers WHERE cardnumber='200000000042'" | grep -v 'borrowernumber' || echo "")
@@ -267,5 +264,5 @@ cleanup_issues() {
         count=$(koha_mysql "DELETE FROM issues WHERE borrowernumber=$patron_id AND itemnumber=(SELECT itemnumber FROM items WHERE barcode='$bc')" || echo "")
         echo "  barcode $bc: deleted $count issue(s)"
     done
-    echo "── Cleanup done ──"
+    echo "-- Cleanup done --"
 }

@@ -27,7 +27,7 @@ run_scenario() {
     sequence=$(echo "$scenario" | jq -r '.sequence // false')
 
     echo ""
-    echo "  ── Scenario $sid: $name ──"
+    echo "  -- Scenario $sid: $name --"
 
     mock_clear
     [ "$error_mode" -gt 0 ] && mock_error "$error_mode"
@@ -118,10 +118,10 @@ run_scenario() {
     fi
 }
 
-# ── main ──
-echo "╔════════════════════════════════════════╗"
-echo "║  $PAGE"
-echo "╚════════════════════════════════════════╝"
+# -- main --
+echo "[════════════════════════════════════════]"
+echo "|  $PAGE"
+echo "[════════════════════════════════════════]"
 
 rodney connect localhost:$CDP_PORT
 koha_login
@@ -131,12 +131,12 @@ mock_start
 rodney open "$PAGE_URL"
 rodney waitload
 
-# ── Pre-flight: verify Koha DB state and default form ──
+# -- Pre-flight: verify Koha DB state and default form --
 pre_flight_check
 
 # Check that the default checkout form actually works — patron scan fills findborrower
 echo ""
-echo "── Default form check ──"
+echo "-- Default form check --"
 if rodney exists 'input[name=findborrower]' 2>/dev/null; then
     pass "default checkout form (findborrower) is present"
     # Test the form works: load a patron tag and verify input is filled
@@ -147,11 +147,15 @@ if rodney exists 'input[name=findborrower]' 2>/dev/null; then
         pass "default form works — patron scan fills findborrower"
     else
         fail "default form not responding to RFID scan"
+        debug_help
+        exit 1
     fi
 else
     fail "default checkout form not found"
+    debug_help
+    exit 1
 fi
-echo "── Default form OK ──"
+echo "-- Default form OK --"
 
 # Run scenarios
 for sid in $SCENARIO_IDS; do
@@ -159,12 +163,12 @@ for sid in $SCENARIO_IDS; do
     run_scenario "$sid"
 done
 
-# ── Cleanup: revert Koha DB to original state ──
+# -- Cleanup: revert Koha DB to original state --
 cleanup_issues
 
-# ── Post-flight: verify state matches beginning ──
+# -- Post-flight: verify state matches beginning --
 echo ""
-echo "── Post-flight check ──"
+echo "-- Post-flight check --"
 for bc in 1301111111 1302079605 1302099999; do
     local issued
     issued=$(ssh koha-dev.rot13.org sudo /usr/sbin/koha-mysql ffzg -e "SELECT COUNT(*) FROM issues JOIN items USING (itemnumber) WHERE items.barcode='$bc'" 2>/dev/null || echo "")
@@ -174,7 +178,7 @@ for bc in 1301111111 1302079605 1302099999; do
         fail "barcode $bc is still issued"
     fi
 done
-echo "── Post-flight done ──"
+echo "-- Post-flight done --"
 
 echo ""
 echo "Done."
