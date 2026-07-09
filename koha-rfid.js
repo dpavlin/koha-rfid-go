@@ -420,7 +420,7 @@ function rfid_scan(data) {
 	// On circulation-home.pl: checkout tab is #circ_search, renew tab is #renew_search.
 	var checkin_active  = $('#checkin_search').attr('aria-hidden') == 'false';
 	var checkout_active = $('#checkout_search').attr('aria-hidden') == 'false' ||
-                             $('#circ_search').attr('aria-hidden') == 'false';
+	$('#circ_search').attr('aria-hidden') == 'false';
 	var renew_active    = $('#renew_search').attr('aria-hidden') == 'false';
 
 	if ( data.tags && data.tags.length > 0 ) {
