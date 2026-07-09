@@ -36,7 +36,7 @@ start_server() {
 
     # Wait for server to become ready
     for i in 1 2 3 4 5; do
-        if curl -sk "https://${LISTEN}/ping" >/dev/null 2>&1; then
+        if curl -sk "https://${LISTEN}/scan/" >/dev/null 2>&1; then
             echo "Server ready (pid $PID)"
             return 0
         fi
@@ -67,7 +67,7 @@ status_server() {
         local pid
         pid=$(cat "$SERVER_PID_FILE")
         if kill -0 "$pid" 2>/dev/null; then
-            if curl -sk "https://${LISTEN}/ping" >/dev/null 2>&1; then
+            if curl -sk "https://${LISTEN}/scan/" >/dev/null 2>&1; then
                 local mode="real"
                 if curl -sk "https://${LISTEN}/mock/status" >/dev/null 2>&1; then
                     mode="mock"

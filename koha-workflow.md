@@ -136,11 +136,9 @@ Each barcode's Koha-verified state is cached in localStorage. On future scans, t
 
 | Endpoint | Method | Purpose |
 |----------|--------|---------|
-| `/ping` | GET | Health check |
 | `/scan/` | GET | Read RFID tags in range |
-| `/secure` | POST | Write AFI to tag (redirect response) |
-| `/secure.js` | GET | Write AFI to tag (JSONP response for JS) |
-| `/program` | POST | Write barcode content to tag |
+| `/secure` | GET | Write AFI to tag (JSON response) |
+| `/program` | GET | Write barcode content to tag |
 
 ## TLS Certificate
 

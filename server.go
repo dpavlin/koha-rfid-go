@@ -23,7 +23,7 @@ func (lw *loggingResponseWriter) WriteHeader(code int) {
 	lw.ResponseWriter.WriteHeader(code)
 }
 
-// HttpServer provides the local JSONP API for the Koha JavaScript integration.
+// HttpServer provides the local HTTP API for the Koha JavaScript integration.
 type HttpServer struct {
 	listen  string
 	rfidOps rfidops.RfidOps
@@ -57,11 +57,8 @@ func corsHeader(w http.ResponseWriter) {
 func (s *HttpServer) Run() error {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", s.handleIndex)
-	mux.HandleFunc("/ping", s.handlePing)
 	mux.HandleFunc("/scan/", s.handleScan)
-	mux.HandleFunc("/scan/only/", s.handleScan)
 	mux.HandleFunc("/secure", s.handleSecure)
-	mux.HandleFunc("/secure.js", s.handleSecureJSONP)
 	mux.HandleFunc("/program", s.handleProgram)
 
 	// Mock control endpoints — only functional when rfidOps is *mockOps
@@ -73,9 +70,6 @@ func (s *HttpServer) Run() error {
 	mux.HandleFunc("/mock/set", s.handleMockSet)
 	mux.HandleFunc("/mock/status", s.handleMockStatus)
 	mux.HandleFunc("/mock/reset", s.handleMockReset)
-
-	// Static file serving for the JavaScript example
-	mux.Handle("/examples/", http.StripPrefix("/examples/", http.FileServer(http.Dir("examples"))))
 
 	addr := s.listen
 	if addr == "" {
@@ -113,29 +107,17 @@ func (s *HttpServer) handleIndex(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte(html))
 }
 
-func (s *HttpServer) handlePing(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(200)
-	w.Write([]byte(`{"status":"ok"}`))
-}
-
 // ---------------------------------------------------------------------------
-// writeJSONP writes a JSON body wrapped in a callback if present.
-func writeJSONP(w http.ResponseWriter, callback string, body []byte) {
-	if callback != "" {
-		w.Header().Set("Content-Type", "application/javascript")
-		fmt.Fprintf(w, "%s(%s)", callback, body)
-	} else {
-		w.Header().Set("Content-Type", "application/json")
-		w.Write(body)
-	}
+// writeJSON writes a JSON response.
+func writeJSON(w http.ResponseWriter, body []byte) {
+	w.Header().Set("Content-Type", "application/json")
+	w.Write(body)
 }
 
 // ---------------------------------------------------------------------------
 // Scan handler
 
 func (s *HttpServer) handleScan(w http.ResponseWriter, r *http.Request) {
-	callback := r.FormValue("callback")
 
 	// Retry scan on CRC/communication errors
 	var result *rfidops.ScanResult
@@ -178,37 +160,14 @@ func (s *HttpServer) handleScan(w http.ResponseWriter, r *http.Request) {
 	jsonBody, _ := json.Marshal(map[string]interface{}{
 		"tags": items,
 	})
-	writeJSONP(w, callback, jsonBody)
+	writeJSON(w, jsonBody)
 }
 
 // ---------------------------------------------------------------------------
 // Secure handlers
 
 func (s *HttpServer) handleSecure(w http.ResponseWriter, r *http.Request) {
-	status := 302
 	r.ParseForm()
-
-	var ops []rfidops.SecureOp
-	for key, vals := range r.Form {
-		if len(key) == 16 {
-			ops = append(ops, rfidops.SecureOp{SID: key, AfiHex: vals[0]})
-			status = 200
-		}
-	}
-
-	res := rfidops.Secure(s.rfidOps, ops)
-	if res.Error != "" {
-		http.Error(w, res.Error, 400)
-		return
-	}
-
-	w.Header().Set("Location", fmt.Sprintf("http://%s/", s.listen))
-	w.WriteHeader(status)
-}
-
-func (s *HttpServer) handleSecureJSONP(w http.ResponseWriter, r *http.Request) {
-	r.ParseForm()
-	callback := r.FormValue("callback")
 
 	var ops []rfidops.SecureOp
 	for key, vals := range r.Form {
@@ -219,8 +178,16 @@ func (s *HttpServer) handleSecureJSONP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	res := rfidops.Secure(s.rfidOps, ops)
+	if res.Error != "" {
+		jsonBody, _ := json.Marshal(res)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		w.Write(jsonBody)
+		return
+	}
 	jsonBody, _ := json.Marshal(res)
-	writeJSONP(w, callback, jsonBody)
+	w.Header().Set("Content-Type", "application/json")
+	w.Write(jsonBody)
 }
 
 // ---------------------------------------------------------------------------
@@ -248,10 +215,8 @@ func (s *HttpServer) handleProgram(w http.ResponseWriter, r *http.Request) {
 		w.Write(errResp)
 		return
 	}
-
-	callback := r.FormValue("callback")
 	jsonBody, _ := json.Marshal(res)
-	writeJSONP(w, callback, jsonBody)
+	writeJSON(w, jsonBody)
 }
 
 

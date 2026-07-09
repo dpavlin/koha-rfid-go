@@ -25,7 +25,13 @@ SCENARIOS="$(cat tests/scenarios.json)"
 # Logging
 # ------------------------------------------------------------------
 pass()  { echo "  OK $*"; }
-fail()  { echo "  FAIL $*"; record_result "$PAGE" "$SCENARIO_ID" "fail"; return 1; }
+fail()  {
+    echo "  FAIL $*"
+    if [ -n "${SCENARIO_ID:-}" ]; then
+        record_result "$PAGE" "$SCENARIO_ID" "fail"
+    fi
+    return 1
+}
 info()  { echo "  - $*"; }
 result(){ local s="$1"; record_result "$PAGE" "$SCENARIO_ID" "$s"; }
 
@@ -167,9 +173,9 @@ debug_help() {
     echo ""
     echo "  [══ Debug ---------------------------------------------]"
     echo "  |  To inspect interactively:                          |"
-    echo "  |    rodney '$url'                                    |"
-    echo "  |    rodney js 'document.querySelector(\"*\");'         |"
-    echo "  |    rodney html                                      |"
+    echo "  |    /home/dpavlin/.local/bin/uvx rodney '$url'       |"
+    echo "  |    /home/dpavlin/.local/bin/uvx rodney html         |"
+    echo "  |    /home/dpavlin/.local/bin/uvx rodney js '...'     |"
     echo "  [══════════════════════════════════════════════════════]"
     echo ""
     echo "  -- HTML dump --"
@@ -185,7 +191,6 @@ debug_help() {
 
 # ------------------------------------------------------------------
 # DOM checks
-[upto]
 check_db() {
     local result; result=$(koha_mysql "$1" 2>/dev/null || echo "")
     if echo "$result" | grep -q "$2" 2>/dev/null; then

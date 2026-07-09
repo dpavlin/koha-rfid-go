@@ -247,37 +247,6 @@ func TestIntegrationHandleScan(t *testing.T) {
 	}
 }
 
-func TestIntegrationHandleScanWithCallback(t *testing.T) {
-	skipIfNoHardware(t)
-	reader := openReader(t)
-	defer reader.Close()
-
-	server := NewHttpServer("", reader, false)
-
-	req := httptest.NewRequest("GET", "/scan/?callback=jsonp123", nil)
-	w := httptest.NewRecorder()
-	server.handleScan(w, req)
-
-	if w.Code != http.StatusOK {
-		t.Fatalf("status = %d, want %d", w.Code, http.StatusOK)
-	}
-	ct := w.Header().Get("Content-Type")
-	if ct != "application/javascript" {
-		t.Errorf("Content-Type = %q, want application/javascript", ct)
-	}
-	body := w.Body.String()
-	if !strings.HasPrefix(body, "jsonp123(") {
-		t.Errorf("response doesn't start with callback wrapper")
-	}
-	// Verify JSONP body parses as JSON
-	inner := strings.TrimPrefix(body, "jsonp123(")
-	inner = strings.TrimSuffix(inner, ")")
-	var resp map[string]interface{}
-	if err := json.Unmarshal([]byte(inner), &resp); err != nil {
-		t.Fatalf("JSONP inner parse error: %v", err)
-	}
-}
-
 func TestIntegrationHandleSecure(t *testing.T) {
 	skipIfNoHardware(t)
 	reader := openReader(t)
@@ -348,5 +317,4 @@ func TestIntegrationHandleProgram(t *testing.T) {
 
 // ---------------------------------------------------------------------------
 // Helper to run integration tests with logging
-
 

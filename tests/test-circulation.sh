@@ -146,12 +146,12 @@ if rodney exists 'input[name=findborrower]' 2>/dev/null; then
     if check_input_filled 'input[name=findborrower]' 2>/dev/null; then
         pass "default form works — patron scan fills findborrower"
     else
-        fail "default form not responding to RFID scan"
+        fail "default form not responding to RFID scan" || true
         debug_help
         exit 1
     fi
 else
-    fail "default checkout form not found"
+    fail "default checkout form not found" || true
     debug_help
     exit 1
 fi

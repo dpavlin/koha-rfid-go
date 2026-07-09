@@ -181,7 +181,7 @@ function afi_color(sec) {
 // ---------------------------------------------------------------------------
 
 function rfid_secure(barcode, sid, target) {
-	var url = rfid_base_url + '/secure.js?' + sid + '=' + target + '&callback=jsonp';
+	var url = rfid_base_url + '/secure?' + sid + '=' + target;
 	rfid_fetch(url, 15000).then(function(r) {
 		if ( r.status == 200 ) {
 			rfid_afi_clear_pending(barcode);

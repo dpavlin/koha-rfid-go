@@ -30,7 +30,7 @@ Build the plugin KPZ and upload via Koha: Plugins → Upload plugin.
 ┌──────────────────────┐      ┌──────────────────┐      ┌──────────────┐
 │   Koha Staff Browser │      │  RFID Server     │      │  3M 810      │
 │   (koha-rfid.js)     │◄────►│  (Linux/Windows) │◄────►│  RFID Reader │
-│                      │JSONP │                  │Serial│              │
+│                      │JSON  │                  │Serial│              │
 │   /cgi-bin/koha/     │      │  HTTP :9000      │      │  USB→COM     │
 │   circulation.pl     │      │  (no SIP2/REST)  │      └──────────────┘
 │   returns.pl         │      └──────────────────┘
@@ -45,7 +45,7 @@ Build the plugin KPZ and upload via Koha: Plugins → Upload plugin.
 4. RFID server detects tag → reads barcode from RFID501 blocks
 5. JavaScript (`koha-rfid.js`) fills barcode field and submits Koha's own form
 6. Koha processes checkout/check-in natively (no external API calls)
-7. JavaScript calls `/secure.js` to set AFI bit (D7 = unsecure, DA = secure)
+7. JavaScript calls `/secure` to set AFI bit (D7 = unsecure, DA = secure)
 8. Status shown in browser toolbar
 
 ### Why no Koha REST API or SIP2?
@@ -57,7 +57,7 @@ The existing `koha-rfid.js` userscript already handles all Koha page interaction
 - Only AFI changes need the RFID program's HTTP API
 
 The RFID server only needs to:
-1. Scan tags and expose barcodes via JSONP
+1. Scan tags and expose barcodes via JSON
 2. Change AFI bits when instructed by the JavaScript
 
 ## Binaries
@@ -66,7 +66,7 @@ Three executables are built from the same Go codebase. Native Linux builds use t
 
 | Binary | Purpose |
 |---|---|
-| `koha-rfid` / `koha-rfid.exe` | HTTP/JSONP server + background scan (production use) |
+| `koha-rfid` / `koha-rfid.exe` | HTTP/JSON server + background scan (production use) |
 | `scan` / `scan.exe` | CLI scan tool with enter/leave detection |
 | `program` / `program.exe` | CLI tag programming tool |
 
@@ -91,28 +91,22 @@ koha-rfid -port /dev/ttyUSB0 -scan
 |---|---|---|
 | `/` | GET | HTML status page |
 | `/scan/` | GET | Live inventory scan → tag list with AFI + RFID501 barcode |
-| `/secure?<TAG>=<AFI>` | GET | Set AFI byte (redirects back to `/`) |
-| `/secure.js?<TAG>=<AFI>&callback=...` | GET | JSONP version of secure |
-| `/program?<TAG>=<barcode>&callback=...` | GET | RFID501 encode + write blocks + auto AFI |
-| `/examples/` | GET | Static file server for `examples/` directory |
+| `/secure?<TAG>=<AFI>` | GET | Set AFI byte (returns JSON with ok/error) |
+| `/program?<TAG>=<barcode>` | GET | RFID501 encode + write blocks + auto AFI |
+
 
 ### `/scan/`
 
-Performs a **live** RFID inventory scan each request. Returns JSON/JSONP with tag SIDs, decoded RFID501 content, AFI security byte, and reader info. Supports `callback=` for JSONP.
+Performs a **live** RFID inventory scan each request. Returns JSON with tag SIDs, decoded RFID501 content, AFI security byte, and reader info.
 
 Sample response:
 ```json
 {"time":1743123456,"tags":[{"sid":"E2001234567890AB","content":"1301234567","security":"DA","tag_type":"RFID501","reader":"3M810"}]}
 ```
 
-### `/secure.js`
+### `/secure`
 
-Writes an AFI byte to a tag. Query format: `/secure.js?<16-char-SID>=<AFI-hex>&callback=...`.
-
-- **Success:** returns `{"ok":1}`
-- **Invalid AFI hex:** returns `{"ok":0,"error":"invalid AFI hex <value>"}` (400-style error)
-- **Write failure:** returns `{"ok":0,"error":"<error message>"}` (500-style error)
-- The older `/secure` endpoint does a 302 redirect to `/` on success.
+Writes an AFI byte to a tag. Query format: `/secure?<16-char-SID>=<AFI-hex>`.
 
 **AFI constants:**
 - `DA` (0xDA, decimal 218) = **secure** – item checked in, security gate ignores tag
@@ -121,13 +115,7 @@ Writes an AFI byte to a tag. Query format: `/secure.js?<16-char-SID>=<AFI-hex>&c
 ### `/program`
 
 Programs RFID tags with RFID501-encoded barcode content. Query format:
-`/program?<16-char-SID>=<barcode>&<SID>=<barcode>&callback=...`
-
-- Encodes the barcode as RFID501 (8 blocks × 4 bytes)
-- **Auto-detect AFI:** if barcode starts with `130`, AFI is set to `DA` (secure/book); otherwise `D7` (unsecure)
-- Content `blank` writes 3 zero blocks and sets AFI unsecure (`D7`)
-- Multiple tags can be programmed in one request
-- Supports `callback=` for JSONP
+`/program?<16-char-SID>=<barcode>&<SID>=<barcode>`
 
 ## CLI Tools
 
@@ -296,7 +284,7 @@ Copy the built binaries from `build/linux/` to the staff PC or run directly on t
 
 ## Deployment on Windows
 
-Copy the needed `.exe` files plus `examples/` folder to the staff PC.
+Copy the needed `.exe` files to the staff PC.
 
 ### Quick scan test
 ```cmd
@@ -335,7 +323,7 @@ The script will:
 - Poll the RFID server every 1s
 - Detect which Koha page the staff is on (circulation.pl / returns.pl)
 - When a tag appears, fill the barcode field and submit the form
-- Call `/secure.js` to change AFI bits
+- Call `/secure` to change AFI bits
 - Show tag status in the toolbar
 
 ## 3M RFID Protocol Details (from reverse engineering)

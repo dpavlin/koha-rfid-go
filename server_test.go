@@ -12,9 +12,9 @@ import (
 )
 
 // ---------------------------------------------------------------------------
-// Mock RfidOps for tests
+// Stub RfidOps for tests
 
-type mockOps struct {
+type stubOps struct {
 	rfidops.RfidOps                   // embed interface so we only override what we need
 	inventoryFn    func() ([]string, error)
 	readAfiFn      func(tag string) (byte, error)
@@ -23,61 +23,61 @@ type mockOps struct {
 	writeAfiFn     func(tag string, afi byte) error
 }
 
-func (m mockOps) Inventory() ([]string, error) {
+func (m stubOps) Inventory() ([]string, error) {
 	if m.inventoryFn != nil {
 		return m.inventoryFn()
 	}
 	return nil, nil
 }
 
-func (m mockOps) ReadAfi(tag string) (byte, error) {
+func (m stubOps) ReadAfi(tag string) (byte, error) {
 	if m.readAfiFn != nil {
 		return m.readAfiFn(tag)
 	}
 	return 0, nil
 }
 
-func (m mockOps) ReadBlocks(tag string, start, count int) (map[int]string, error) {
+func (m stubOps) ReadBlocks(tag string, start, count int) (map[int]string, error) {
 	if m.readBlocksFn != nil {
 		return m.readBlocksFn(tag, start, count)
 	}
 	return nil, nil
 }
 
-func (m mockOps) WriteBlocks(tag string, data string) error {
+func (m stubOps) WriteBlocks(tag string, data string) error {
 	if m.writeBlocksFn != nil {
 		return m.writeBlocksFn(tag, data)
 	}
 	return nil
 }
 
-func (m mockOps) WriteAfi(tag string, afi byte) error {
+func (m stubOps) WriteAfi(tag string, afi byte) error {
 	if m.writeAfiFn != nil {
 		return m.writeAfiFn(tag, afi)
 	}
 	return nil
 }
 
-func (m mockOps) InventoryWithReset() ([]string, error) {
+func (m stubOps) InventoryWithReset() ([]string, error) {
 	if m.inventoryFn != nil {
 		return m.inventoryFn()
 	}
 	return nil, nil
 }
 
-func (m mockOps) Lock()    {}
-func (m mockOps) Unlock()  {}
+func (m stubOps) Lock()    {}
+func (m stubOps) Unlock()  {}
 
 // ---------------------------------------------------------------------------
 // Helpers
 
-// newTestServer creates an HttpServer with mock ops and optional listen address.
+// newTestServer creates an HttpServer with stub ops and optional listen address.
 func newTestServer(listen string) *HttpServer {
-	return NewHttpServer(listen, mockOps{}, false)
+	return NewHttpServer(listen, stubOps{}, false)
 }
 
-// newTestServerWithOps creates an HttpServer with a custom mockOps.
-func newTestServerWithOps(m mockOps) *HttpServer {
+// newTestServerWithOps creates an HttpServer with a custom stubOps.
+func newTestServerWithOps(m stubOps) *HttpServer {
 	return NewHttpServer("", m, false)
 }
 
@@ -101,7 +101,7 @@ func TestHandleIndex(t *testing.T) {
 
 // TestHandleScan tests the scan handler with mock data.
 func TestHandleScan(t *testing.T) {
-	m := mockOps{
+	m := stubOps{
 		inventoryFn: func() ([]string, error) {
 			return []string{"E2001234567890AB"}, nil
 		},
@@ -138,41 +138,8 @@ func TestHandleScan(t *testing.T) {
 	}
 }
 
-func TestHandleScanWithCallback(t *testing.T) {
-	m := mockOps{
-		inventoryFn: func() ([]string, error) {
-			return []string{"E2001234567890AB"}, nil
-		},
-		readAfiFn: func(tag string) (byte, error) {
-			return 0xDA, nil
-		},
-		readBlocksFn: func(tag string, start, count int) (map[int]string, error) {
-			return map[int]string{
-				0: "3133303132333435",
-				1: "3637000000000000",
-			}, nil
-		},
-	}
-	server := newTestServerWithOps(m)
-	req := httptest.NewRequest("GET", "/scan/?callback=jsonp123", nil)
-	w := httptest.NewRecorder()
-	server.handleScan(w, req)
-
-	if w.Code != http.StatusOK {
-		t.Errorf("status = %d, want %d", w.Code, http.StatusOK)
-	}
-	ct := w.Header().Get("Content-Type")
-	if ct != "application/javascript" {
-		t.Errorf("Content-Type = %q, want application/javascript", ct)
-	}
-	body := w.Body.String()
-	if !strings.HasPrefix(body, "jsonp123(") {
-		t.Errorf("response doesn't start with callback wrapper")
-	}
-}
-
 func TestHandleScanError(t *testing.T) {
-	m := mockOps{
+	m := stubOps{
 		inventoryFn: func() ([]string, error) {
 			return nil, fmt.Errorf("mock inventory error")
 		},
@@ -182,32 +149,16 @@ func TestHandleScanError(t *testing.T) {
 	w := httptest.NewRecorder()
 	server.handleScan(w, req)
 
-	if w.Code != http.StatusInternalServerError {
-		t.Errorf("status = %d, want %d", w.Code, http.StatusInternalServerError)
+	if w.Code != 504 {
+		t.Errorf("status = %d, want 504 (Gateway Timeout)", w.Code)
 	}
 }
 
 // ---------------------------------------------------------------------------
 // Secure handler tests
 
-func TestHandleSecureRedirect(t *testing.T) {
-	server := newTestServer("otherhost:8080")
-	req := httptest.NewRequest("GET", "/secure", nil)
-	w := httptest.NewRecorder()
-	server.handleSecure(w, req)
-
-	if w.Code != http.StatusFound {
-		t.Errorf("status = %d, want %d", w.Code, http.StatusFound)
-	}
-	loc := w.Header().Get("Location")
-	wantLoc := fmt.Sprintf("http://%s/", server.listen)
-	if loc != wantLoc {
-		t.Errorf("Location = %q, want %q", loc, wantLoc)
-	}
-}
-
 func TestHandleSecureSuccess(t *testing.T) {
-	m := mockOps{
+	m := stubOps{
 		writeAfiFn: func(tag string, afi byte) error {
 			return nil
 		},
@@ -223,7 +174,7 @@ func TestHandleSecureSuccess(t *testing.T) {
 }
 
 func TestHandleSecureError(t *testing.T) {
-	m := mockOps{
+	m := stubOps{
 		writeAfiFn: func(tag string, afi byte) error {
 			return fmt.Errorf("mock write error")
 		},
@@ -239,10 +190,10 @@ func TestHandleSecureError(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// Secure JSONP tests
+// Secure handler non-reader tests (parameter validation)
 
-func TestHandleSecureJSONPNonReader(t *testing.T) {
-	m := mockOps{
+func TestHandleSecureNonReader(t *testing.T) {
+	m := stubOps{
 		writeAfiFn: func(tag string, afi byte) error {
 			return nil
 		},
@@ -250,91 +201,70 @@ func TestHandleSecureJSONPNonReader(t *testing.T) {
 	server := newTestServerWithOps(m)
 
 	tests := []struct {
-		name       string
-		query      string
-		wantOK     int
-		wantError  string
-		expectJSONP bool
+		name      string
+		query     string
+		wantOK    int
+		wantError string
 	}{
 		{
-			name:       "invalid AFI hex – bad chars",
-			query:      "E2001234567890AB=ZZ",
-			wantOK:     0,
-			wantError:  "invalid AFI hex",
-			expectJSONP: false,
+			name:      "invalid AFI hex – bad chars",
+			query:     "E2001234567890AB=ZZ",
+			wantOK:    0,
+			wantError: "invalid AFI hex",
 		},
 		{
-			name:       "invalid AFI hex – too long",
-			query:      "E2001234567890AB=DAFF",
-			wantOK:     0,
-			wantError:  "invalid AFI hex",
-			expectJSONP: false,
+			name:      "invalid AFI hex – too long",
+			query:     "E2001234567890AB=DAFF",
+			wantOK:    0,
+			wantError: "invalid AFI hex",
 		},
 		{
-			name:       "invalid AFI hex with callback",
-			query:      "E2001234567890AB=ZZ&callback=jsonp123",
-			wantOK:     0,
-			wantError:  "invalid AFI hex",
-			expectJSONP: true,
+			name:      "invalid AFI hex with extra params",
+			query:     "E2001234567890AB=ZZ&callback=jsonp123",
+			wantOK:    0,
+			wantError: "invalid AFI hex",
 		},
 		{
-			name:       "short key (<16 chars) – skipped, no tags processed",
-			query:      "E20012345678AB=DA",
-			wantOK:     1,
-			wantError:  "",
-			expectJSONP: false,
+			name:      "short key (<16 chars) – skipped, no tags processed",
+			query:     "E20012345678AB=DA",
+			wantOK:    1,
+			wantError: "",
 		},
 		{
-			name:       "key starting with 'call' – skipped",
-			query:      "callback1234567890=DA",
-			wantOK:     1,
-			wantError:  "",
-			expectJSONP: false,
+			name:      "key starting with 'call' – skipped",
+			query:     "callback1234567890=DA",
+			wantOK:    1,
+			wantError: "",
 		},
 		{
-			name:       "key starting with '_' – skipped",
-			query:      "_E2001234567890AB=DA",
-			wantOK:     1,
-			wantError:  "",
-			expectJSONP: false,
+			name:      "key starting with '_' – skipped",
+			query:     "_E2001234567890AB=DA",
+			wantOK:    1,
+			wantError: "",
 		},
 		{
-			name:       "no form keys at all",
-			query:      "",
-			wantOK:     1,
-			wantError:  "",
-			expectJSONP: false,
+			name:      "no form keys at all",
+			query:     "",
+			wantOK:    1,
+			wantError: "",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			req := httptest.NewRequest("GET", "/secure.js?"+tt.query, nil)
+			req := httptest.NewRequest("GET", "/secure?"+tt.query, nil)
 			w := httptest.NewRecorder()
-			server.handleSecureJSONP(w, req)
+			server.handleSecure(w, req)
 
 			resp := w.Body.String()
 			ct := w.Header().Get("Content-Type")
 
-			if tt.expectJSONP {
-				if ct != "application/javascript" {
-					t.Errorf("Content-Type = %q, want application/javascript", ct)
-				}
-				if !strings.HasPrefix(resp, "jsonp123(") {
-					t.Errorf("response doesn't start with callback wrapper")
-				}
-			} else {
-				if ct != "application/json" {
-					t.Errorf("Content-Type = %q, want application/json", ct)
-				}
+			if ct != "application/json" {
+				t.Errorf("Content-Type = %q, want application/json", ct)
 			}
 
 			var result map[string]interface{}
 			body := resp
-			if strings.HasPrefix(body, "jsonp123(") {
-				body = strings.TrimPrefix(body, "jsonp123(")
-				body = strings.TrimSuffix(body, ")")
-			}
 			if err := json.Unmarshal([]byte(body), &result); err != nil {
 				t.Fatalf("json parse error: %v\nraw body: %s", err, resp)
 			}
@@ -359,39 +289,11 @@ func TestHandleSecureJSONPNonReader(t *testing.T) {
 	}
 }
 
-func TestHandleSecureJSONPSuccess(t *testing.T) {
-	m := mockOps{
-		writeAfiFn: func(tag string, afi byte) error {
-			return nil
-		},
-	}
-	server := newTestServerWithOps(m)
-	req := httptest.NewRequest("GET", "/secure.js?E2001234567890AB=DA", nil)
-	w := httptest.NewRecorder()
-	server.handleSecureJSONP(w, req)
-
-	if w.Code != http.StatusOK {
-		t.Errorf("status = %d, want %d", w.Code, http.StatusOK)
-	}
-
-	var result map[string]interface{}
-	if err := json.Unmarshal(w.Body.Bytes(), &result); err != nil {
-		t.Fatalf("json parse error: %v", err)
-	}
-	okVal, ok := result["ok"].(float64)
-	if !ok {
-		t.Fatalf("missing 'ok'")
-	}
-	if int(okVal) != 1 {
-		t.Errorf("ok = %d, want 1", int(okVal))
-	}
-}
-
 // ---------------------------------------------------------------------------
 // Program handler tests
 
 func TestHandleProgramNonReader(t *testing.T) {
-	m := mockOps{
+	m := stubOps{
 		writeBlocksFn: func(tag string, data string) error {
 			return nil
 		},
@@ -402,35 +304,28 @@ func TestHandleProgramNonReader(t *testing.T) {
 	server := newTestServerWithOps(m)
 
 	tests := []struct {
-		name        string
-		query       string
-		expectJSON  bool
-		expectJSONP bool
+		name  string
+		query string
 	}{
 		{
-			name:       "short key (<16 chars) – skipped",
-			query:      "E20012345678AB=1301234567",
-			expectJSON: true,
+			name:  "short key (<16 chars) – skipped",
+			query: "E20012345678AB=1301234567",
 		},
 		{
-			name:       "key starting with 'call' – skipped",
-			query:      "callback1234567890=1301234567",
-			expectJSON: true,
+			name:  "key starting with 'call' – skipped",
+			query: "callback1234567890=1301234567",
 		},
 		{
-			name:       "key starting with '_' – skipped",
-			query:      "_E2001234567890AB=1301234567",
-			expectJSON: true,
+			name:  "key starting with '_' – skipped",
+			query: "_E2001234567890AB=1301234567",
 		},
 		{
-			name:       "no form keys at all",
-			query:      "",
-			expectJSON: true,
+			name:  "no form keys at all",
+			query: "",
 		},
 		{
-			name:        "callback wrapping only (no tag keys)",
-			query:       "callback=jsonp123",
-			expectJSONP: true,
+			name:  "callback param ignored (no tag keys)",
+			query: "callback=jsonp123",
 		},
 	}
 
@@ -447,26 +342,12 @@ func TestHandleProgramNonReader(t *testing.T) {
 			resp := w.Body.String()
 			ct := w.Header().Get("Content-Type")
 
-			if tt.expectJSONP {
-				if ct != "application/javascript" {
-					t.Errorf("Content-Type = %q, want application/javascript", ct)
-				}
-				if !strings.HasPrefix(resp, "jsonp123(") {
-					t.Errorf("response doesn't start with callback wrapper")
-				}
-			}
-			if tt.expectJSON {
-				if ct != "application/json" {
-					t.Errorf("Content-Type = %q, want application/json", ct)
-				}
+			if ct != "application/json" {
+				t.Errorf("Content-Type = %q, want application/json", ct)
 			}
 
 			var result map[string]interface{}
 			body := resp
-			if strings.HasPrefix(body, "jsonp123(") {
-				body = strings.TrimPrefix(body, "jsonp123(")
-				body = strings.TrimSuffix(body, ")")
-			}
 			if err := json.Unmarshal([]byte(body), &result); err != nil {
 				t.Fatalf("json parse error: %v\nraw body: %s", err, resp)
 			}
@@ -483,7 +364,7 @@ func TestHandleProgramNonReader(t *testing.T) {
 }
 
 func TestHandleProgramSuccess(t *testing.T) {
-	m := mockOps{
+	m := stubOps{
 		writeBlocksFn: func(tag string, data string) error {
 			return nil
 		},
@@ -514,7 +395,7 @@ func TestHandleProgramSuccess(t *testing.T) {
 }
 
 func TestHandleProgramError(t *testing.T) {
-	m := mockOps{
+	m := stubOps{
 		writeBlocksFn: func(tag string, data string) error {
 			return fmt.Errorf("mock write error")
 		},
@@ -533,7 +414,7 @@ func TestHandleProgramError(t *testing.T) {
 // NewHttpServer tests
 
 func TestNewHttpServer(t *testing.T) {
-	server := NewHttpServer("", mockOps{}, true)
+	server := NewHttpServer("", stubOps{}, true)
 
 	if server.listen != "" {
 		t.Errorf("listen = %q, want empty (Run() applies default)", server.listen)
@@ -547,12 +428,11 @@ func TestNewHttpServer(t *testing.T) {
 }
 
 func TestRunMuxRegistration(t *testing.T) {
-	server := NewHttpServer("", mockOps{}, false)
+	server := NewHttpServer("", stubOps{}, false)
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", server.handleIndex)
 	mux.HandleFunc("/scan/", server.handleScan)
 	mux.HandleFunc("/secure", server.handleSecure)
-	mux.HandleFunc("/secure.js", server.handleSecureJSONP)
 	mux.HandleFunc("/program", server.handleProgram)
 
 	// Verify each handler responds (we don't start the server, just check routing)
@@ -562,8 +442,7 @@ func TestRunMuxRegistration(t *testing.T) {
 	}{
 		{"/", 200},
 		{"/scan/", 200},
-		{"/secure", 302},
-		{"/secure.js", 200},
+		{"/secure", 200},
 		{"/program", 200},
 	}
 

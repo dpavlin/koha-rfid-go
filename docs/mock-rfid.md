@@ -52,9 +52,8 @@ Then start the mock:
 
 | Endpoint | Method | Response |
 |---|---|---|
-| `/ping` | GET | `{"status":"ok"}` |
 | `/scan/` | GET | `{"tags":[{"sid":"…","content":"…","security":"DA","tag_type":"RFID501","reader":"mock"},…]}` |
-| `/secure.js?SID=D7&callback=jsonp` | GET | `jsonp({"ok":1,"error":""})` |
+| `/secure?SID=D7` | GET | `{"ok":1}` |
 
 ### Control endpoints (drive the simulation)
 
@@ -181,8 +180,8 @@ Add a DA book, then simulate the secure write that the JS performs:
 ```bash
 curl -s -X POST -d '{"sid":"e00401001f7812ed","content":"1301111111","security":"DA"}' \
   http://localhost:9001/mock/tag
-# JS calls /secure.js?e00401001f7812ed=D7 → mock updates security to D7
-curl -s 'http://localhost:9001/secure.js?e00401001f7812ed=D7&callback=jsonp'
+# JS calls /secure?e00401001f7812ed=D7 → mock updates security to D7
+curl -s 'http://localhost:9001/secure?e00401001f7812ed=D7'
 # Verify
 curl -s http://localhost:9001/mock/status | jq
 ```
@@ -233,7 +232,7 @@ curl -s -X POST http://localhost:9001/mock/clear
 curl -s -X POST -d '{"sid":"e00401001f7812ed","content":"1301111111","security":"DA"}' \
   http://localhost:9001/mock/tag
 # Book detected → checkout submitted → JS writes D7
-curl -s 'http://localhost:9001/secure.js?e00401001f7812ed=D7&callback=jsonp'
+curl -s 'http://localhost:9001/secure?e00401001f7812ed=D7'
 ```
 
 ## How the mock server works
@@ -241,7 +240,7 @@ curl -s 'http://localhost:9001/secure.js?e00401001f7812ed=D7&callback=jsonp'
 - In-memory tag list protected by a mutex.
 - `/scan/` returns whatever tags are in the list, with `tag_type:"RFID501"` and
   `reader:"mock"` to distinguish from real reader output.
-- `/secure.js` looks up the tag by SID and updates its `security` field to the
+- `/secure` looks up the tag by SID and updates its `security` field to the
   requested value (DA or D7), then returns success.
 - Error/timeout counters decrement on each `/scan/` call and affect only the
   next N calls.

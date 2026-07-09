@@ -36,7 +36,6 @@ All four mock-rfid tag barcodes exist:
 
 ## Tables to query
 
-[upto]
 ## Questions to resolve
 
 1. ✅ `koha-mysql` command: `sudo /usr/sbin/koha-mysql ffzg -e "<query>"`

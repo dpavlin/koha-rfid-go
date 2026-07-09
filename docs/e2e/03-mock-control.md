@@ -67,6 +67,5 @@ curl -s -X POST -d '{"count":1}' "$MOCK_URL/mock/error"
 ## Questions to resolve
 
 1. ✅ **Option A**: port 9000 + TLS — no JS override needed, certs exist in repo (`rfid-localhost.crt` / `rfid-localhost.key`)
-[upto]
 2. How to ensure mock is running before test starts?
 3. How to cleanup mock state between tests?
