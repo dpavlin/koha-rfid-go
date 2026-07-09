@@ -58,26 +58,27 @@ check_rfid_server() {
 }
 
 # ──────────────────────────────────────────────────────────────────
-# Mock server
+# Mock server — delegates to server.sh for clean start/stop with logging.
+# If a mock-mode server is already running, skip start and stop (leave it for other tests).
+# If a real reader is running, stop it first so mock can take over.
 # ──────────────────────────────────────────────────────────────────
 mock_start() {
-    if curl -sk "$MOCK_URL/mock/status" >/dev/null 2>&1; then
-        echo "Mock server already running"
-        return
+    # Check if something is already running on the port
+    local resp
+    resp=$(curl -sk "$MOCK_URL/" 2>/dev/null || echo "")
+    if echo "$resp" | grep -q "mock"; then
+        echo "  → Mock server already running — reusing"
+        return 0
     fi
-    check_rfid_server || return 1
-    echo "Starting mock RFID server on port 9000 (TLS)..."
-    ./koha-rfid -mock -tls &
-    sleep 2
-    if curl -sk "$MOCK_URL/mock/status" >/dev/null 2>&1; then
-        echo "Mock server started"
-    else
-        echo "ERROR: mock server did not start"
-        exit 1
+    if echo "$resp" | grep -qiE '(koha|rfid|html|read|tag)' 2>/dev/null; then
+        echo "  → Stopping real server so mock can start"
+        ./server.sh stop
+        sleep 1
     fi
+    ./server.sh start --mock || return 1
 }
 
-mock_stop() { kill %1 2>/dev/null || true; }
+mock_stop() { :; }
 mock_clear() { curl -sk -X POST "$MOCK_URL/mock/clear" >/dev/null 2>&1; }
 mock_add() { curl -sk -X POST -d "{\"sid\":\"$1\",\"content\":\"$2\",\"security\":\"$3\"}" "$MOCK_URL/mock/tag" >/dev/null 2>&1; }
 mock_reset() { curl -sk -X POST "$MOCK_URL/mock/reset" >/dev/null 2>&1; }
@@ -93,8 +94,13 @@ rodney() { uvx rodney "$@" 2>&1; }
 koha_login() {
     [ -n "${SKIP_KOHA_LOGIN:-}" ] && echo "  SKIP_KOHA_LOGIN set — skipping login" && return
     rodney page 0
-    rodney open "$KOHA_URL/mainpage.pl"
-    rodney waitload
+    # Only navigate if not already on the Koha page (avoids unnecessary reload).
+    local current_url
+    current_url=$(rodney url 2>/dev/null || echo "")
+    if [[ "$current_url" != "$KOHA_URL/mainpage.pl" ]]; then
+        rodney open "$KOHA_URL/mainpage.pl"
+        rodney waitload
+    fi
     # Check if already logged in — no login form means session active
     if rodney exists '#login form' 2>/dev/null; then
         rodney input 'input[name=userid]' "$KOHA_USER"
@@ -119,9 +125,9 @@ tab_switch() {
     local tab="$1"
     [ -z "$tab" ] && return 0
     case "$tab" in
-        checkout) rodney click 'a[href="#circ_search"]';;
-        checkin)  rodney click 'a[href="#checkin_search"]';;
-        renew)    rodney click 'a[href="#renew_search"]';;
+        checkout) rodney js 'document.querySelector("a[href=\"#circ_search\"]").click()';;
+        checkin)  rodney js 'document.querySelector("a[href=\"#checkin_search\"]").click()';;
+        renew)    rodney js 'document.querySelector("a[href=\"#renew_search\"]").click()';;
         *)        echo "  [warn] unknown tab: $tab"; return 1;;
     esac
     rodney sleep 1
@@ -160,7 +166,7 @@ scenario_passed() {
 # DOM checks
 # ──────────────────────────────────────────────────────────────────
 check_popup_empty() {
-    local text; text=$(rodney text '#rfid-popup' 2>/dev/null || echo "")
+    local text; text=$(rodney text '#rfid-popup-body' 2>/dev/null || echo "")
     if echo "$text" | grep -qiE '(no tags|empty|no RFID|no tags found)' 2>/dev/null; then
         pass "popup: no tags"; return 0
     fi
@@ -171,7 +177,7 @@ check_popup_empty() {
 }
 
 check_popup_contains() {
-    local text; text=$(rodney text '#rfid-popup' 2>/dev/null || echo "")
+    local text; text=$(rodney text '#rfid-popup-body' 2>/dev/null || echo "")
     if echo "$text" | grep -qi "$1" 2>/dev/null; then
         pass "popup contains '$1'"; return 0
     fi

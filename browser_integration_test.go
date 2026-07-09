@@ -98,16 +98,16 @@ func startRFIDServer(t *testing.T) func() {
 }
 
 // rfidPatchJS returns JavaScript that patches the RFID polling URLs from
-// protocol-relative (///localhost:9000) to http://localhost:9000 so they work
+// protocol-relative (///localhost:9000) to https://localhost:9000 so they work
 // over the HTTPS Koha page.
 func rfidPatchJS() string {
 	return `
-	// Patch RFID polling URLs to use http:// instead of protocol-relative ///
-	// This is needed because Koha serves over HTTPS, but our RFID server is HTTP.
+	// Patch RFID polling URLs to use https:// instead of protocol-relative ///
+	// This is needed because Koha serves over HTTPS, and our RFID server is HTTPS.
 	var origGetJSON = $.getJSON;
 	$.getJSON = function(url, success) {
 		if (typeof url === 'string' && url.indexOf('///localhost:9000') === 0) {
-			url = 'http://localhost:9000' + url.slice(3);
+			url = 'https://localhost:9000' + url.slice(3);
 			console.log('RFID: patched URL', url);
 		}
 		return origGetJSON(url, success);

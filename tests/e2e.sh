@@ -11,10 +11,12 @@ set -eu
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$SCRIPT_DIR/.."
+source "$SCRIPT_DIR/lib.sh"
 
 # ──────────────────────────────────────────────────────────────────
 # Config
 # ──────────────────────────────────────────────────────────────────
+MOCK_URL="${MOCK_URL:-https://localhost:9000}"
 RESULTS_FILE="${RESULTS_FILE:-/tmp/rfid-test-results}"
 PAGE_FILTER="${1:-}"
 SCENARIO_FILTER="${2:-}"
@@ -49,24 +51,10 @@ list_scenarios() {
 }
 
 ensure_mock_running() {
-    if curl -sk "$MOCK_URL/mock/status" >/dev/null 2>&1; then
-        echo "Mock server already running"
-        return
-    fi
-    check_rfid_server || {
-        echo ""
-        echo "Stop the real RFID server first, then re-run."
-        exit 1
-    }
-    echo "Starting mock RFID server on port 9000 (TLS)..."
-    ./cmd/mock-rfid/mock-rfid -port 9000 -tls &
-    sleep 2
-    if curl -sk "$MOCK_URL/mock/status" >/dev/null 2>&1; then
-        echo "Mock server started"
-    else
+    mock_start || {
         echo "ERROR: mock server did not start"
         exit 1
-    fi
+    }
 }
 
 run_page() {

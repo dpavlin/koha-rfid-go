@@ -101,13 +101,8 @@ func (s *HttpServer) Run() error {
 			log.Printf("HTTP %s %s -> %d in %v", r.Method, r.URL.Path, lw.status, time.Since(start))
 		}
 	})
-	if s.tlsCert != "" && s.tlsKey != "" {
-		log.Printf("HTTPS server listening on %s", addr)
-		return http.ListenAndServeTLS(addr, s.tlsCert, s.tlsKey, handler)
-	}
-
-	log.Printf("HTTP server listening on %s", addr)
-	return http.ListenAndServe(addr, handler)
+	log.Printf("HTTPS server listening on %s", addr)
+	return http.ListenAndServeTLS(addr, s.tlsCert, s.tlsKey, handler)
 }
 
 func (s *HttpServer) handleIndex(w http.ResponseWriter, r *http.Request) {
@@ -157,7 +152,7 @@ func (s *HttpServer) handleScan(w http.ResponseWriter, r *http.Request) {
 		time.Sleep(200 * time.Millisecond)
 	}
 	if err != nil {
-		http.Error(w, fmt.Sprintf("RFID error: %v", err), 500)
+		http.Error(w, fmt.Sprintf("RFID error: %v", err), 504)
 		return
 	}
 

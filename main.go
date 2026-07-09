@@ -78,7 +78,7 @@ func main() {
 	mock := flag.Bool("mock", false, "Use mock RFID reader for browser testing (no real reader needed)")
 	listen := flag.String("listen", "localhost:9000", "HTTP server listen address")
 	onlyScan := flag.Bool("scan", false, "Scan once and exit (no HTTP server)")
-	tlsMode := flag.Bool("tls", false, "Serve HTTPS with auto-generated self-signed cert")
+	// TLS is always enabled — self-signed cert generated at startup
 	flag.Parse()
 
 	// Determine RFID ops: mock or real reader
@@ -121,13 +121,11 @@ func main() {
 	// Start HTTP server
 	server := NewHttpServer(*listen, ops, *debug)
 
-	if *tlsMode {
-		cert, key, err := genSelfSignedCert()
-		if err != nil {
-			log.Fatalf("TLS cert: %v", err)
-		}
-		server.SetTLS(cert, key)
+	cert, key, err := genSelfSignedCert()
+	if err != nil {
+		log.Fatalf("TLS cert: %v", err)
 	}
+	server.SetTLS(cert, key)
 	go func() {
 		log.Printf("Starting HTTP server on %s", *listen)
 		if err := server.Run(); err != nil {

@@ -29,7 +29,7 @@ run_scenario() {
 
     mock_clear
     [ "$error_mode" -gt 0 ] && mock_error "$error_mode"
-    [ "$timeout_mode" -gt 0 ] && mock_timeout "$timeout_mode"
+    [ "$timeout_mode" -gt 0 ] && mock_timeout 100
 
     # renew.pl has no tabs — #barcode visible by default
     for tag_key in $tags; do load_tag "$tag_key"; done
@@ -84,10 +84,9 @@ echo "╚═══════════════════════�
 rodney connect localhost:$CDP_PORT
 koha_login
 mock_start
-rodney page 0
+# Navigate to the test page (reusing page 0 instead of opening a new tab)
 rodney open "$PAGE_URL"
 rodney waitload
-
 for sid in $SCENARIO_IDS; do
     [ -n "$SCENARIO_FILTER" ] && [ "$sid" != "$SCENARIO_FILTER" ] && continue
     scenario_passed "$PAGE" "$sid" && echo "  Scenario $sid already passed — skip" && continue

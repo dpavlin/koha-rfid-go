@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"log"
 	"net/http"
 	"strings"
@@ -41,12 +42,12 @@ func (m *mockOps) Inventory() ([]string, error) {
 	m.state.mu.Lock()
 	defer m.state.mu.Unlock()
 
-	// Error mode
+	// Error mode — return a generic error so the JavaScript shows "RFID scan error"
 	if m.state.errorCount > 0 {
 		m.state.errorCount--
-		return nil, rfidops.ErrReaderTimeout
+		return nil, errors.New("RFID reader error")
 	}
-	// Timeout mode — return empty to trigger timeout in rfidops.Scan
+	// Timeout mode — return timeout error to trigger timeout handling
 	if m.state.timeoutCount > 0 {
 		m.state.timeoutCount--
 		return nil, rfidops.ErrReaderTimeout

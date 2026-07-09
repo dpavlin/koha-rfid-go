@@ -223,11 +223,11 @@ function rfid_popup_update() {
 			' (' + remaining + 's)</div>';
 	}
 	if (html == '') html = '<span style="color:#888">(no tags)</span>';
-	if ( log.length == 0 ) {
-		var body = $('#rfid-popup-body');
-		var el = body[0];
-		if ( el ) el.insertAdjacentHTML('afterend', html);
-	} else {
+	// Skip DOM update if content hasn't changed — avoids unnecessary reflows
+	// and keeps the DOM stable for rodney queries.
+	if ( log.length > 0 ) {
+		var cur = log.html();
+		if ( cur === html ) return;
 		log.html(html);
 	}
 }

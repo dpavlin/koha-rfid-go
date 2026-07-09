@@ -29,13 +29,14 @@ run_scenario() {
 
     mock_clear
     [ "$error_mode" -gt 0 ] && mock_error "$error_mode"
-    [ "$timeout_mode" -gt 0 ] && mock_timeout 1  # initial timeout count; timeout block overrides to 2
+    [ "$timeout_mode" -gt 0 ] && mock_timeout 1  # initial timeout count; timeout block overrides to 100
 
     for tag_key in $tags; do load_tag "$tag_key"; done
 
     if [ "$timeout_mode" -gt 0 ]; then
-        # Timeout scenario: mock returns 504 immediately, browser shows timeout error
-        mock_timeout 2  # two polls (current + retry) both get 504 so error persists
+        # Timeout scenario: mock returns timeout for all scan retries.
+        # Use a high count (100) to cover multiple polls during the 6s sleep.
+        mock_timeout 100
         sleep 6
         check_popup_contains "timeout" && result "pass" || result "fail"
     else
@@ -77,9 +78,6 @@ echo "╚═══════════════════════�
 rodney connect localhost:$CDP_PORT
 koha_login
 mock_start
-rodney page 0
-rodney open "$PAGE_URL"
-rodney waitload
 
 for sid in $SCENARIO_IDS; do
     [ -n "$SCENARIO_FILTER" ] && [ "$sid" != "$SCENARIO_FILTER" ] && continue
@@ -89,8 +87,3 @@ done
 
 echo ""
 echo "Done."
-
-# Cleanup — kill mock server and rodney to stop browser polling
-mock_stop
-kill %1 %2 2>/dev/null || true  # rodney + mock
-echo "  Cleaned up mock server and rodney"

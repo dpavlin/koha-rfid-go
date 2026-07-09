@@ -5,10 +5,9 @@
 #   ./server.sh stop             — stop server (SIGTERM)
 #   ./server.sh status           — check if server is running (exit 0 if alive)
 
-SERVER_PID_FILE="${SERVER_PID_FILE:-/tmp/koha-rfid-server.pid}"
-SERVER_LOG="${SERVER_LOG:-/tmp/koha-rfid-server.log}"
-LISTEN="${LISTEN:-localhost:9000}"
-TLS="${TLS:-1}"  # 1 = enable TLS, 0 = plain HTTP
+SERVER_PID_FILE=/tmp/koha-rfid-server.pid
+SERVER_LOG=/tmp/koha-rfid-server.log
+LISTEN=localhost:9000
 
 start_server() {
     local mode="$1"  # --mock or empty
@@ -28,7 +27,6 @@ start_server() {
 
     local cmd="./koha-rfid"
     [ "$mode" = "--mock" ] && cmd="$cmd -mock"
-    [ "$TLS" = "1" ] && cmd="$cmd -tls"
 
     echo "Starting: $cmd"
     echo "Log: $SERVER_LOG"
@@ -37,10 +35,8 @@ start_server() {
     echo "$PID" > "$SERVER_PID_FILE"
 
     # Wait for server to become ready
-    local proto="http"
-    [ "$TLS" = "1" ] && proto="https"
     for i in 1 2 3 4 5; do
-        if curl -sk "${proto}://${LISTEN}/ping" >/dev/null 2>&1; then
+        if curl -sk "https://${LISTEN}/ping" >/dev/null 2>&1; then
             echo "Server ready (pid $PID)"
             return 0
         fi
@@ -71,9 +67,7 @@ status_server() {
         local pid
         pid=$(cat "$SERVER_PID_FILE")
         if kill -0 "$pid" 2>/dev/null; then
-            local proto="http"
-            [ "$TLS" = "1" ] && proto="https"
-            if curl -sk "${proto}://${LISTEN}/ping" >/dev/null 2>&1; then
+            if curl -sk "https://${LISTEN}/ping" >/dev/null 2>&1; then
                 echo "Server running (pid $pid)"
                 return 0
             fi
