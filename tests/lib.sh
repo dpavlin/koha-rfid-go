@@ -158,9 +158,6 @@ record_result() {
     local page="$1" sid="$2" status="$3"
     echo "$page.$sid=$status" >> "$RESULTS_FILE"
 }
-scenario_passed() {
-    grep -q "$1.$2=pass" "$RESULTS_FILE" 2>/dev/null
-}
 
 # ──────────────────────────────────────────────────────────────────
 # DOM checks

@@ -81,7 +81,6 @@ mock_start
 
 for sid in $SCENARIO_IDS; do
     [ -n "$SCENARIO_FILTER" ] && [ "$sid" != "$SCENARIO_FILTER" ] && continue
-    scenario_passed "$PAGE" "$sid" && echo "  Scenario $sid already passed — skip" && continue
     run_scenario "$sid"
 done
 
