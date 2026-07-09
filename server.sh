@@ -68,7 +68,11 @@ status_server() {
         pid=$(cat "$SERVER_PID_FILE")
         if kill -0 "$pid" 2>/dev/null; then
             if curl -sk "https://${LISTEN}/ping" >/dev/null 2>&1; then
-                echo "Server running (pid $pid)"
+                local mode="real"
+                if curl -sk "https://${LISTEN}/mock/status" >/dev/null 2>&1; then
+                    mode="mock"
+                fi
+                echo "Server running (pid $pid, mode: $mode)"
                 return 0
             fi
             echo "Server pid $pid but not responding"
