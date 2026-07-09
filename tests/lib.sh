@@ -212,6 +212,9 @@ pre_flight_check() {
     echo ""
     echo "── Pre-flight checks ──"
 
+    # Clean up any leftover issues from previous runs first
+    cleanup_issues
+
     # Check patron exists in borrowers table
     local patron
     patron=$(koha_mysql "SELECT COUNT(*) FROM borrowers WHERE cardnumber='200000000042'" || echo "")
@@ -256,10 +259,12 @@ pre_flight_check() {
 cleanup_issues() {
     echo ""
     echo "── Cleanup ──"
-    # Delete only the issues created during testing for our specific test books
+    # Delete only test patron's issues for our specific test books
+    local patron_id
+    patron_id=$(koha_mysql "SELECT borrowernumber FROM borrowers WHERE cardnumber='200000000042'" | grep -v 'borrowernumber' || echo "")
     for bc in 1301111111 1302079605 1302099999; do
         local count
-        count=$(koha_mysql "DELETE FROM issues WHERE itemnumber=(SELECT itemnumber FROM items WHERE barcode='$bc')" || echo "")
+        count=$(koha_mysql "DELETE FROM issues WHERE borrowernumber=$patron_id AND itemnumber=(SELECT itemnumber FROM items WHERE barcode='$bc')" || echo "")
         echo "  barcode $bc: deleted $count issue(s)"
     done
     echo "── Cleanup done ──"
