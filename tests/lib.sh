@@ -190,11 +190,19 @@ check_input_filled() {
 }
 
 check_db() {
-    local result; result=$(ssh koha-dev.rot13.org sudo /usr/sbin/koha-mysql ffzg -e "$1" 2>/dev/null || echo "")
+    local result; result=$(koha_mysql "$1" 2>/dev/null || echo "")
     if echo "$result" | grep -q "$2" 2>/dev/null; then
         pass "DB: $2"; return 0
     fi
     fail "DB expected '$2' but got: $result"; return 1
+}
+
+# ──────────────────────────────────────────────────────────────────
+# Helper to run koha-mysql queries via SSH (handles quoting properly)
+# ──────────────────────────────────────────────────────────────────
+koha_mysql() {
+    local sql="$1"
+    ssh koha-dev.rot13.org "sudo /usr/sbin/koha-mysql ffzg -e '$sql'" 2>/dev/null
 }
 
 # ──────────────────────────────────────────────────────────────────
@@ -204,36 +212,36 @@ pre_flight_check() {
     echo ""
     echo "── Pre-flight checks ──"
 
-    # Check all four barcodes exist in Koha DB
-    local barcodes="200000000042 1301111111 1302079605 1302099999"
-    for bc in $barcodes; do
+    # Check patron exists in borrowers table
+    local patron
+    patron=$(koha_mysql "SELECT COUNT(*) FROM borrowers WHERE cardnumber='200000000042'" || echo "")
+    if echo "$patron" | grep -q "1"; then
+        echo "  ✓ patron 200000000042 exists"
+    else
+        echo "  ✗ patron 200000000042 not found"
+        return 1
+    fi
+
+    # Check book barcodes exist in items table
+    for bc in 1301111111 1302079605 1302099999; do
         local exists
-        exists=$(ssh koha-dev.rot13.org sudo /usr/sbin/koha-mysql ffzg -e "SELECT COUNT(*) FROM items WHERE barcode='$bc'" 2>/dev/null || echo "")
+        exists=$(koha_mysql "SELECT COUNT(*) FROM items WHERE barcode='$bc'" || echo "")
         if echo "$exists" | grep -q "1"; then
-            info "barcode $bc exists in items"
+            echo "  ✓ barcode $bc exists in items"
         else
-            fail "barcode $bc not found in items"
+            echo "  ✗ barcode $bc not found in items"
             return 1
         fi
     done
-    # Check patron exists
-    local patron
-    patron=$(ssh koha-dev.rot13.org sudo /usr/sbin/koha-mysql ffzg -e "SELECT COUNT(*) FROM borrowers WHERE cardnumber='200000000042'" 2>/dev/null || echo "")
-    if echo "$patron" | grep -q "1"; then
-        info "patron 200000000042 exists"
-    else
-        fail "patron 200000000042 not found"
-        return 1
-    fi
 
     # Check none of the books are currently issued
     for bc in 1301111111 1302079605 1302099999; do
         local issued
-        issued=$(ssh koha-dev.rot13.org sudo /usr/sbin/koha-mysql ffzg -e "SELECT COUNT(*) FROM issues JOIN items USING (itemnumber) WHERE items.barcode='$bc'" 2>/dev/null || echo "")
+        issued=$(koha_mysql "SELECT COUNT(*) FROM issues JOIN items USING (itemnumber) WHERE items.barcode='$bc'" || echo "")
         if echo "$issued" | grep -q "0"; then
-            info "barcode $bc is not issued — clean"
+            echo "  ✓ barcode $bc is not issued — clean"
         else
-            fail "barcode $bc is currently issued — state not reproducible"
+            echo "  ✗ barcode $bc is currently issued — state not reproducible"
             return 1
         fi
     done
@@ -248,9 +256,11 @@ pre_flight_check() {
 cleanup_issues() {
     echo ""
     echo "── Cleanup ──"
-    # Delete any issues created during testing for our patron
-    local count
-    count=$(ssh koha-dev.rot13.org sudo /usr/sbin/koha-mysql ffzg -e "DELETE FROM issues WHERE borrowernumber=(SELECT borrowernumber FROM borrowers WHERE cardnumber='200000000042')" 2>/dev/null || echo "")
-    info "deleted issues: $count"
+    # Delete only the issues created during testing for our specific test books
+    for bc in 1301111111 1302079605 1302099999; do
+        local count
+        count=$(koha_mysql "DELETE FROM issues WHERE itemnumber=(SELECT itemnumber FROM items WHERE barcode='$bc')" || echo "")
+        echo "  barcode $bc: deleted $count issue(s)"
+    done
     echo "── Cleanup done ──"
 }
