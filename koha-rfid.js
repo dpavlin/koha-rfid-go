@@ -21,8 +21,13 @@ var RFID_VERSION = '2.2';  // version number for tracking; v2.2 = tag-leave dete
 var rfid_base_url = 'https://localhost:9000'; // override for mock-server testing
 var rfid_timeout = null;
 var rfid_poll_pending = false;
-var rfid_server_ok = false; // set after first successful ping
 var rfid_no_reader = localStorage.getItem('rfid_no_reader') == 'true'; // user opted out
+
+// Named constants (not magic numbers)
+var RFID_SCAN_TIMEOUT = 15000;   // max wait for /scan/ response
+var RFID_SCAN_RETRY_MS = 5000;   // delay before retrying scan after error
+var RFID_POLL_INTERVAL_MS = 1000;// delay between polls after successful scan
+var RFID_DEDUP_MS = 10000;       // time window for dedup (same book re-submit guard)
 
 var rfid_spinner_idx = 0;  // spinner frame counter
 
@@ -34,7 +39,7 @@ window.rfidDebug = {};
 // Expose key variables for rodney inspection
 window.rfidDebug.afiMap = function() { return rfid_storage_get('rfid_afi', {}); };
 window.rfidDebug.localStorage = function() { return JSON.parse(JSON.stringify(localStorage)); };
-window.rfidDebug.serverOk = rfid_server_ok;
+
 window.rfidDebug.pollPending = function() { return rfid_poll_pending; };
 window.rfidDebug.timeout = function() { return rfid_timeout; };
 window.rfidDebug.noReader = function() { return rfid_no_reader; };
@@ -342,20 +347,10 @@ function rfid_fetch(url, timeout_ms) {
 	});
 }
 
-function rfid_check_server() {
-	return rfid_fetch(rfid_base_url + '/ping', 3000).then(function(r) {
-		if ( r.ok ) {
-			rfid_server_ok = true;
-			return true;
-		}
-		throw new Error('HTTP ' + r.status);
-	}).catch(function(e) {
-		throw e;
-	});
-}
+
 
 function rfid_poll() {
-	console.log('rfid_poll: pending=' + rfid_poll_pending + ' noReader=' + rfid_no_reader + ' serverOk=' + rfid_server_ok);
+	console.log('rfid_poll: pending=' + rfid_poll_pending + ' noReader=' + rfid_no_reader);
 	if ( rfid_poll_pending ) return;
 	if ( rfid_no_reader ) return;
 	rfid_poll_pending = true;
@@ -367,52 +362,25 @@ function rfid_poll() {
 	// Show spinner
 	rfid_spinner_show();
 
-	// Ping once — after success skip it on subsequent polls
-	var ping = rfid_server_ok ? Promise.resolve(true) : rfid_check_server();
-
-	ping.then(function() {
-		var timeout = window.setTimeout(function() {
-			rfid_poll_pending = false;
-			rfid_spinner_hide();
-			rfid_show_error('RFID server not responding (reader timeout)', true);
-		}, 20000);
-
-		rfid_fetch(rfid_base_url + '/scan/', 15000).then(function(r) {
-			window.clearTimeout(timeout);
-			if ( r.ok ) return r.json();
-			throw new Error('HTTP ' + r.status);
-		}).then(function(data) {
-			rfid_poll_pending = false;
-			rfid_spinner_hide();
-			console.log('rfid_poll: scan response, pending=false, calling rfid_scan');
-			rfid_scan(data);
-		}).catch(function(e) {
-			window.clearTimeout(timeout);
-			rfid_poll_pending = false;
-			rfid_spinner_hide();
-			var errorMsg = 'RFID scan error: ' + e.message;
-			if (e.message.indexOf('abort') >= 0 || e.message.indexOf('timeout') >= 0) {
-				errorMsg = 'RFID scan error: timeout';
-			} else if (e.message.indexOf('504') >= 0) {
-				errorMsg = 'RFID scan error: timeout';
-			}
-			rfid_show_error(errorMsg, true);
-			rfid_timeout = window.setTimeout( rfid_poll, 5000 );
-		});
+	rfid_fetch(rfid_base_url + '/scan/', RFID_SCAN_TIMEOUT).then(function(r) {
+		rfid_poll_pending = false;
+		rfid_spinner_hide();
+		if ( r.ok ) return r.json();
+		throw new Error('HTTP ' + r.status);
+	}).then(function(data) {
+		rfid_poll_pending = false;
+		rfid_spinner_hide();
+		console.log('rfid_poll: scan response, pending=false, calling rfid_scan');
+		rfid_scan(data);
 	}).catch(function(e) {
 		rfid_poll_pending = false;
-		console.log('rfid_poll: catch ping error, pending=false');
 		rfid_spinner_hide();
-		var msg = 'RFID server not reachable';
-		if ( e.name == 'TypeError' || e.message.indexOf('Failed to fetch') >= 0 ) {
-			msg += ' (connection refused or TLS error)';
-		} else if ( e.message.indexOf('abort') >= 0 || e.message.indexOf('timeout') >= 0 ) {
-			msg += ' (timeout)';
-		} else if ( e.message.indexOf('HTTP') >= 0 ) {
-			msg += ' (' + e.message + ')';
+		var msg = 'RFID scan error: ' + e.message;
+		if (e.message.indexOf('abort') >= 0 || e.message.indexOf('timeout') >= 0 || e.message.indexOf('504') >= 0) {
+			msg = 'RFID scan error: timeout';
 		}
 		rfid_show_error(msg, true);
-		rfid_timeout = window.setTimeout( rfid_poll, 5000 );
+		rfid_timeout = window.setTimeout( rfid_poll, RFID_SCAN_RETRY_MS );
 	});
 }
 
@@ -452,7 +420,7 @@ function rfid_scan(data) {
 	// On circulation-home.pl: checkout tab is #circ_search, renew tab is #renew_search.
 	var checkin_active  = $('#checkin_search').attr('aria-hidden') == 'false';
 	var checkout_active = $('#checkout_search').attr('aria-hidden') == 'false' ||
-	                     $('#circ_search').attr('aria-hidden') == 'false';
+                             $('#circ_search').attr('aria-hidden') == 'false';
 	var renew_active    = $('#renew_search').attr('aria-hidden') == 'false';
 
 	if ( data.tags && data.tags.length > 0 ) {
@@ -494,12 +462,12 @@ function rfid_scan(data) {
 						// Tag still has the old AFI — perform the write now
 						body.text( t.content + ' (writing ' + entry.pending + '...)' ).css('color', '#888');
 						rfid_secure( t.content, t.sid, entry.pending );
-						rfid_timeout = window.setTimeout( rfid_poll, 1000 );
+						rfid_timeout = window.setTimeout( rfid_poll, RFID_POLL_INTERVAL_MS );
 						return;
 					} else {
 						// The write already happened — clear pending and update stored sec
 						rfid_afi_set(t.content, sec, null);
-						rfid_timeout = window.setTimeout( rfid_poll, 1000 );
+						rfid_timeout = window.setTimeout( rfid_poll, RFID_POLL_INTERVAL_MS );
 						return;
 					}
 				}
@@ -509,7 +477,7 @@ function rfid_scan(data) {
 				// (returns page has its own time-based dedup — see Step 4)
 				// -----------------------------------------------------------
 				if ( entry && entry.sec == sec && !returns ) {
-					rfid_timeout = window.setTimeout( rfid_poll, 1000 );
+					rfid_timeout = window.setTimeout( rfid_poll, RFID_POLL_INTERVAL_MS );
 					return;
 				}
 
@@ -527,7 +495,7 @@ function rfid_scan(data) {
 					} else {
 						body.text( t.content + ' (not on loan — cannot renew)' ).css('color', 'blue');
 					}
-					rfid_timeout = window.setTimeout( rfid_poll, 1000 );
+					rfid_timeout = window.setTimeout( rfid_poll, RFID_POLL_INTERVAL_MS );
 					return;
 				}
 
@@ -553,21 +521,21 @@ function rfid_scan(data) {
 				if ( returns ) {
 					// Time-based dedup: skip if last submit was within 10 seconds
 					var now = Date.now();
-					var shouldSubmit = !entry || !entry.submit || (now - entry.submit > 10000);
+					var shouldSubmit = !entry || !entry.submit || (now - entry.submit > RFID_DEDUP_MS);
 					if ( shouldSubmit ) {
-						var i = $('#barcode');
-						if ( i.is(':visible') && i.val() != t.content ) {
-							i.val( t.content );
+						var barcodeInput = $('#barcode');
+						if ( barcodeInput.is(':visible') && barcodeInput.val() != t.content ) {
+							barcodeInput.val( t.content );
 							// Set pending only if book was on loan (D7 → need to write DA)
 							var pending = (sec == 'D7') ? 'DA' : null;
 							rfid_afi_set(t.content, sec, pending);
 							rfid_afi_set_submit(t.content);
-							i.closest('form').submit();
+							barcodeInput.closest('form').submit();
 						}
 					} else {
 						body.text( t.content + ' (already submitted)' ).css('color', 'blue');
 					}
-					rfid_timeout = window.setTimeout( rfid_poll, 1000 );
+					rfid_timeout = window.setTimeout( rfid_poll, RFID_POLL_INTERVAL_MS );
 					return;
 				}
 
@@ -582,35 +550,35 @@ function rfid_scan(data) {
 						// circulation-home.pl — tabs switch visible forms
 						if ( checkin_active ) {
 							// Checkin tab → returns form (#ret_barcode), same logic as Step 4
-							var now = Date.now();
-							var shouldSubmit = !entry || !entry.submit || (now - entry.submit > 10000);
+							now = Date.now();
+							shouldSubmit = !entry || !entry.submit || (now - entry.submit > RFID_DEDUP_MS);
 							if ( shouldSubmit ) {
-								var i = $('#ret_barcode');
-								if ( i.is(':visible') && i.val() != t.content ) {
-									i.val( t.content );
-									var pending = (sec == 'D7') ? 'DA' : null;
+								var retInput = $('#ret_barcode');
+								if ( retInput.is(':visible') && retInput.val() != t.content ) {
+									retInput.val( t.content );
+									pending = (sec == 'D7') ? 'DA' : null;
 									rfid_afi_set(t.content, sec, pending);
 									rfid_afi_set_submit(t.content);
-									i.closest('form').submit();
+									retInput.closest('form').submit();
 								}
 							} else {
 								body.text( t.content + ' (already submitted)' ).css('color', 'blue');
 							}
 						} else if ( renew_active && sec == 'D7' ) {
 							// Renew tab — #ren_barcode, same logic as Step 3
-							var i = $('#ren_barcode');
-							if ( i.is(':visible') && i.val() != t.content ) {
-								i.val( t.content );
+							var renInput = $('#ren_barcode');
+							if ( renInput.is(':visible') && renInput.val() != t.content ) {
+								renInput.val( t.content );
 								rfid_afi_set(t.content, sec, null);
-								i.closest('form').submit();
+								renInput.closest('form').submit();
 							}
 						} else if ( checkout_active && sec == 'DA' ) {
 							// Checkout tab — use #barcode if visible (after patron selection)
-							var i = $('#barcode');
-							if ( i.length > 0 && i.is(':visible') && i.val() != t.content ) {
-								i.val( t.content );
+							var checkoutInput = $('#barcode');
+							if ( checkoutInput.length > 0 && checkoutInput.is(':visible') && checkoutInput.val() != t.content ) {
+								checkoutInput.val( t.content );
 								rfid_afi_set(t.content, sec, 'D7');
-								i.closest('form').submit();
+								checkoutInput.closest('form').submit();
 							} else {
 								body.text( t.content + ' (' + label + ')' ).css('color', color);
 							}
@@ -622,18 +590,18 @@ function rfid_scan(data) {
 						if ( sec == 'DA' ) {
 							var is_checkout = checkout_active || (!checkin_active && circulation);
 							if ( is_checkout ) {
-								var i = $('#barcode');
-								if ( i.length > 0 && i.is(':visible') && i.val() != t.content ) {
-									i.val( t.content );
+								var circInput = $('#barcode');
+								if ( circInput.length > 0 && circInput.is(':visible') && circInput.val() != t.content ) {
+									circInput.val( t.content );
 									rfid_afi_set(t.content, sec, 'D7'); // pending AFI write to D7
-									i.closest('form').submit();
+									circInput.closest('form').submit();
 								}
 							}
 						} else {
 							body.text( t.content + ' (not checked in — cannot checkout)' ).css('color', 'blue');
 						}
 					}
-					rfid_timeout = window.setTimeout( rfid_poll, 1000 );
+					rfid_timeout = window.setTimeout( rfid_poll, RFID_POLL_INTERVAL_MS );
 					return;
 				}
 
@@ -687,7 +655,7 @@ function rfid_scan(data) {
 	console.log('rfid_scan: calling rfid_popup_update');
 	rfid_popup_update();
 	console.log('rfid_scan: scheduling next poll in 1s, pending=' + rfid_poll_pending);
-	rfid_timeout = window.setTimeout( rfid_poll, 1000 );
+	rfid_timeout = window.setTimeout( rfid_poll, RFID_POLL_INTERVAL_MS );
 	console.log('rfid_scan: done');
 }
 
