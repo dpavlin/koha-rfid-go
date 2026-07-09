@@ -239,3 +239,32 @@ Each version stores its version key in localStorage (`rfid_storage_version`). On
 ```bash
 uvx rodney js '(function(){... return result})()'
 ```
+
+---
+
+## Test Fixes — 2026-07-09
+
+For exact code changes, see `git log --diff-filter=M -p -- server_test.go server_integration_test.go browser_integration_test.go` and `git log -p -- server.go`.
+
+### 1. Multiple `TestMain` in same package
+Go only allows one `TestMain` per package. The browser test's `TestMain` was kept as it logs RFID_PORT, KOHA_USER, CDP_PORT. See git log for the exact removal.
+
+### 2. Mock `RfidOps` must implement the full interface
+`mockOps` embeds `rfidops.RfidOps` but was missing `Lock()`, `Unlock()`, `InventoryWithReset()`. The `rfidops.Scan()` function calls these, causing nil-pointer panic. See git log for the added methods.
+
+### 3. chromedp API changes
+`chromedp.NewRemoteBrowser()` was removed in v0.9.0+ and replaced by `NewRemoteAllocator()`. The URL format changed from `ws://HOST/devtools/browser/` to `http://HOST`. See git log for the exact replacement.
+
+### 4. Dead `tagCache` and `BackgroundScan` removed
+`tagCache` was populated on every `/scan/` but only read by `BackgroundScan()`, which was never called from `main.go`. Removed both along with `sync.Mutex`. See git log for the diff.
+
+### 5. Shell E2E tests need specific env
+`tests/e2e.sh` and per-page scripts require:
+- `MOCK_URL` pointing to mock RFID server
+- `KOHA_USER` / `KOHA_PASS` for Koha login
+- Chrome with `--remote-debugging-port=9333`
+- `source /home/dpavlin/koha-dev.env` (hardcoded path in `lib.sh`)
+- rodney (`uvx rodney`) installed
+
+They are **not** standalone unit tests – they are full workflow automation scripts.
+
