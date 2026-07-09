@@ -1,0 +1,205 @@
+[
+  {
+    "id": 1,
+    "name": "No tags",
+    "tags": [],
+    "tier": 1,
+    "pages": ["mainpage", "circulation-home", "circulation", "returns", "renew"],
+    "expect": { "popup": "no tags", "db_change": false }
+  },
+  {
+    "id": 2,
+    "name": "Patron only",
+    "tags": ["patron"],
+    "tier": 1,
+    "pages": ["circulation-home", "circulation"],
+    "tab": "checkout",
+    "expect": { "input": "findborrower", "db_change": false }
+  },
+  {
+    "id": 3,
+    "name": "Book DA checkin",
+    "tags": ["book1"],
+    "tier": 1,
+    "pages": ["circulation-home", "circulation", "returns"],
+    "tab": "checkin",
+    "expect": { "input": "barcode", "db_change": false }
+  },
+  {
+    "id": 4,
+    "name": "Book D7 renew",
+    "tags": ["book3"],
+    "tier": 1,
+    "pages": ["circulation-home", "circulation", "renew"],
+    "tab": "renew",
+    "expect": { "input": "barcode", "db_change": false }
+  },
+  {
+    "id": 5,
+    "name": "Empty tag",
+    "tags": ["empty"],
+    "tier": 1,
+    "pages": ["mainpage", "circulation-home", "circulation", "returns", "renew"],
+    "expect": { "popup": "empty", "db_change": false }
+  },
+  {
+    "id": 6,
+    "name": "Error mode",
+    "tags": ["book1"],
+    "tier": 1,
+    "pages": ["mainpage", "circulation-home", "circulation", "returns", "renew"],
+    "error_mode": 1,
+    "expect": { "popup": "error", "db_change": false }
+  },
+  {
+    "id": 7,
+    "name": "Timeout mode",
+    "tags": ["book1"],
+    "tier": 1,
+    "pages": ["mainpage", "circulation-home", "circulation", "returns", "renew"],
+    "timeout_mode": 1,
+    "expect": { "popup": "timeout", "db_change": false }
+  },
+  {
+    "id": 8,
+    "name": "Tag leaves range",
+    "tags": ["book1"],
+    "tier": 1,
+    "pages": ["mainpage", "circulation-home", "circulation", "returns", "renew"],
+    "remove_after_scan": true,
+    "expect": { "popup": "disappears", "db_change": false }
+  },
+  {
+    "id": 9,
+    "name": "Multiple books DA",
+    "tags": ["book1", "book2"],
+    "tier": 1,
+    "pages": ["mainpage", "circulation-home", "circulation", "returns", "renew"],
+    "expect": { "popup": "multiple tags", "db_change": false }
+  },
+  {
+    "id": 10,
+    "name": "Mixed AFI",
+    "tags": ["book1", "book3"],
+    "tier": 1,
+    "pages": ["mainpage", "circulation-home", "circulation", "returns", "renew"],
+    "expect": { "popup": "multiple tags", "db_change": false }
+  },
+  {
+    "id": 11,
+    "name": "Patron + 1 book DA",
+    "tags": ["patron", "book1"],
+    "tier": 2,
+    "pages": ["circulation"],
+    "tab": "checkout",
+    "sequence": true,
+    "expect": { "patron_input": "findborrower", "book_input": "barcode", "db_change": true, "db_query": "SELECT COUNT(*) FROM issues WHERE borrowernumber=(SELECT borrowernumber FROM borrowers WHERE cardnumber='200000000042') AND itemnumber=(SELECT itemnumber FROM items WHERE barcode='1301111111')" }
+  },
+  {
+    "id": 12,
+    "name": "Patron + 2 books DA",
+    "tags": ["patron", "book1", "book2"],
+    "tier": 2,
+    "pages": ["circulation"],
+    "tab": "checkout",
+    "sequence": true,
+    "expect": { "db_change": true }
+  },
+  {
+    "id": 13,
+    "name": "Patron + 3 books DA",
+    "tags": ["patron", "book1", "book2", "book3"],
+    "tier": 2,
+    "pages": ["circulation"],
+    "tab": "checkout",
+    "sequence": true,
+    "expect": { "db_change": true }
+  },
+  {
+    "id": 14,
+    "name": "Patron + 1 book D7",
+    "tags": ["patron", "book3"],
+    "tier": 2,
+    "pages": ["circulation"],
+    "tab": "checkout",
+    "sequence": true,
+    "expect": { "patron_input": "findborrower", "popup": "not checked in", "db_change": false }
+  },
+  {
+    "id": 15,
+    "name": "Return 1 book DA",
+    "tags": ["book1"],
+    "tier": 3,
+    "pages": ["returns"],
+    "expect": { "input": "barcode", "db_change": true }
+  },
+  {
+    "id": 16,
+    "name": "Return 2 books DA",
+    "tags": ["book1", "book2"],
+    "tier": 3,
+    "pages": ["returns"],
+    "sequence": true,
+    "expect": { "db_change": true }
+  },
+  {
+    "id": 17,
+    "name": "Return 3 books DA",
+    "tags": ["book1", "book2", "book3"],
+    "tier": 3,
+    "pages": ["returns"],
+    "sequence": true,
+    "expect": { "db_change": true }
+  },
+  {
+    "id": 18,
+    "name": "Return D7 book",
+    "tags": ["book3"],
+    "tier": 3,
+    "pages": ["returns"],
+    "expect": { "input": "barcode", "db_change": true }
+  },
+  {
+    "id": 19,
+    "name": "Renew D7 book",
+    "tags": ["book3"],
+    "tier": 4,
+    "pages": ["renew"],
+    "expect": { "input": "barcode", "db_change": true, "db_query": "SELECT renews FROM issues WHERE itemnumber=(SELECT itemnumber FROM items WHERE barcode='1302099999')" }
+  },
+  {
+    "id": 20,
+    "name": "Renew DA book",
+    "tags": ["book1"],
+    "tier": 4,
+    "pages": ["renew"],
+    "expect": { "popup": "not on loan", "db_change": false }
+  },
+  {
+    "id": 21,
+    "name": "Patron on circ-home",
+    "tags": ["patron"],
+    "tier": 5,
+    "pages": ["circulation-home"],
+    "tab": "checkout",
+    "expect": { "input": "findborrower", "db_change": false }
+  },
+  {
+    "id": 22,
+    "name": "Book checkin on circ-home",
+    "tags": ["book1"],
+    "tier": 5,
+    "pages": ["circulation-home"],
+    "tab": "checkin",
+    "expect": { "input": "ret_barcode", "db_change": false }
+  },
+  {
+    "id": 23,
+    "name": "Book renew on circ-home",
+    "tags": ["book3"],
+    "tier": 5,
+    "pages": ["circulation-home"],
+    "tab": "renew",
+    "expect": { "input": "ren_barcode", "db_change": false }
+  }
+]

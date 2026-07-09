@@ -6,11 +6,15 @@ package rfidops
 
 import (
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"strings"
 
 	"koha-rfid/internal/rfid"
 )
+
+// ErrReaderTimeout is returned when the RFID reader fails to respond.
+var ErrReaderTimeout = errors.New("RFID reader timeout")
 
 // RfidOps abstracts the RFID reader so callers can swap in a mock for testing.
 type RfidOps interface {

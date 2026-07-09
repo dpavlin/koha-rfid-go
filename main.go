@@ -75,28 +75,37 @@ func genSelfSignedCert() (certFile, keyFile string, err error) {
 func main() {
 	comPort := flag.String("port", "/dev/ttyUSB0", "Serial port for 3M RFID reader")
 	debug := flag.Bool("debug", false, "Enable debug logging")
+	mock := flag.Bool("mock", false, "Use mock RFID reader for browser testing (no real reader needed)")
 	listen := flag.String("listen", "localhost:9000", "HTTP server listen address")
 	onlyScan := flag.Bool("scan", false, "Scan once and exit (no HTTP server)")
 	tlsMode := flag.Bool("tls", false, "Serve HTTPS with auto-generated self-signed cert")
 	flag.Parse()
 
-	// Open RFID reader
-	log.Printf("Opening RFID reader on %s ...", *comPort)
-	reader, err := rfid.NewRfidReader(*comPort, *debug)
-	if err != nil {
-		log.Fatalf("RFID reader: %v", err)
-	}
-	defer reader.Close()
+	// Determine RFID ops: mock or real reader
+	var ops rfidops.RfidOps
 
-	// Probe reader
-	hwVer, err := reader.Probe()
-	if err != nil {
-		log.Fatalf("RFID probe failed: %v", err)
+	if *mock {
+		log.Println("Using mock RFID reader (no real hardware required)")
+		ops = newMockOps()
+	} else {
+		log.Printf("Opening RFID reader on %s ...", *comPort)
+		reader, err := rfid.NewRfidReader(*comPort, *debug)
+		if err != nil {
+			log.Fatalf("RFID reader: %v", err)
+		}
+		defer reader.Close()
+
+		// Probe reader
+		hwVer, err := reader.Probe()
+		if err != nil {
+			log.Fatalf("RFID probe failed: %v", err)
+		}
+		log.Printf("3M 810 hardware version: %s", hwVer)
+		ops = reader
 	}
-	log.Printf("3M 810 hardware version: %s", hwVer)
 
 	if *onlyScan {
-		result, err := rfidops.Scan(reader)
+		result, err := rfidops.Scan(ops)
 		if err != nil {
 			log.Fatalf("Inventory scan failed: %v", err)
 		}
@@ -110,7 +119,7 @@ func main() {
 	}
 
 	// Start HTTP server
-	server := NewHttpServer(*listen, reader, *debug)
+	server := NewHttpServer(*listen, ops, *debug)
 
 	if *tlsMode {
 		cert, key, err := genSelfSignedCert()

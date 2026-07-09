@@ -1,0 +1,75 @@
+{
+  "mainpage": {
+    "url": "mainpage.pl",
+    "forms": [],
+    "inputs": {},
+    "tabs": {
+      "checkout": "#circ_search",
+      "checkin": "#checkin_search",
+      "renew": "#renew_search"
+    },
+    "rfid_inputs": {}
+  },
+  "circulation-home": {
+    "url": "circ/circulation-home.pl",
+    "forms": [],
+    "inputs": {
+      "findborrower": { "id": "#findborrower", "tab": "checkout" },
+      "ret_barcode": { "id": "#ret_barcode", "tab": "checkin" },
+      "ren_barcode": { "id": "#ren_barcode", "tab": "renew" }
+    },
+    "tabs": {
+      "checkout": "#circ_search",
+      "checkin": "#checkin_search",
+      "renew": "#renew_search"
+    },
+    "rfid_inputs": {
+      "patron": "findborrower",
+      "book_checkin": "ret_barcode",
+      "book_renew": "ren_barcode"
+    }
+  },
+  "circulation": {
+    "url": "circ/circulation.pl",
+    "forms": [],
+    "inputs": {
+      "findborrower": { "id": "#findborrower", "tab": "checkout" },
+      "ret_barcode": { "id": "#ret_barcode", "tab": "checkin" },
+      "ren_barcode": { "id": "#ren_barcode", "tab": "renew" },
+      "barcode": { "id": "#barcode", "tab": "checkout", "after_patron": true }
+    },
+    "tabs": {
+      "checkout": "#circ_search",
+      "checkin": "#checkin_search",
+      "renew": "#renew_search"
+    },
+    "rfid_inputs": {
+      "patron": "findborrower",
+      "book_checkout": "barcode",
+      "book_checkin": "ret_barcode",
+      "book_renew": "ren_barcode"
+    }
+  },
+  "returns": {
+    "url": "circ/returns.pl",
+    "forms": [],
+    "inputs": {
+      "barcode": { "id": "#barcode", "tab": null }
+    },
+    "tabs": {},
+    "rfid_inputs": {
+      "book": "barcode"
+    }
+  },
+  "renew": {
+    "url": "circ/renew.pl",
+    "forms": [],
+    "inputs": {
+      "barcode": { "id": "#barcode", "tab": null }
+    },
+    "tabs": {},
+    "rfid_inputs": {
+      "book": "barcode"
+    }
+  }
+}

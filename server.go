@@ -64,6 +64,16 @@ func (s *HttpServer) Run() error {
 	mux.HandleFunc("/secure.js", s.handleSecureJSONP)
 	mux.HandleFunc("/program", s.handleProgram)
 
+	// Mock control endpoints — only functional when rfidOps is *mockOps
+	mux.HandleFunc("/mock/tag", s.handleMockTag)
+	mux.HandleFunc("/mock/clear", s.handleMockClear)
+	mux.HandleFunc("/mock/remove", s.handleMockRemove)
+	mux.HandleFunc("/mock/error", s.handleMockError)
+	mux.HandleFunc("/mock/timeout", s.handleMockTimeout)
+	mux.HandleFunc("/mock/set", s.handleMockSet)
+	mux.HandleFunc("/mock/status", s.handleMockStatus)
+	mux.HandleFunc("/mock/reset", s.handleMockReset)
+
 	// Static file serving for the JavaScript example
 	mux.Handle("/examples/", http.StripPrefix("/examples/", http.FileServer(http.Dir("examples"))))
 
