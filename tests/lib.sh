@@ -208,6 +208,20 @@ koha_mysql() {
 }
 
 # ------------------------------------------------------------------
+# DOM checks
+check_input_filled() {
+    local sel="$1"
+    local val
+    val=$(rodney js "document.querySelector('$sel')?.value" 2>/dev/null || echo "")
+    if [ -n "$val" ]; then
+        pass "input '$sel' filled with: $val"
+        return 0
+    fi
+    fail "input '$sel' is empty"
+    return 1
+}
+
+# ------------------------------------------------------------------
 # Pre-flight checks — verify Koha DB state before running tests
 # ------------------------------------------------------------------
 pre_flight_check() {

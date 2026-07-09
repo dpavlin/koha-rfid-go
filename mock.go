@@ -154,6 +154,15 @@ func (s *HttpServer) handleMockTag(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ops.state.mu.Lock()
+	for i, existing := range ops.state.tags {
+		if strings.EqualFold(existing.SID, t.SID) {
+			ops.state.tags[i] = t
+			ops.state.mu.Unlock()
+			w.WriteHeader(200)
+			w.Write([]byte(`{"ok":1}`))
+			return
+		}
+	}
 	ops.state.tags = append(ops.state.tags, t)
 	ops.state.mu.Unlock()
 
