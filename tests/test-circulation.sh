@@ -126,13 +126,55 @@ echo "╚═══════════════════════�
 rodney connect localhost:$CDP_PORT
 koha_login
 mock_start
+
 # Navigate to the test page (reusing page 0 instead of opening a new tab)
 rodney open "$PAGE_URL"
 rodney waitload
+
+# ── Pre-flight: verify Koha DB state and default form ──
+pre_flight_check
+
+# Check that the default checkout form actually works — patron scan fills findborrower
+echo ""
+echo "── Default form check ──"
+if rodney exists 'input[name=findborrower]' 2>/dev/null; then
+    pass "default checkout form (findborrower) is present"
+    # Test the form works: load a patron tag and verify input is filled
+    mock_clear
+    load_tag "patron"
+    sleep 3
+    if check_input_filled 'input[name=findborrower]' 2>/dev/null; then
+        pass "default form works — patron scan fills findborrower"
+    else
+        fail "default form not responding to RFID scan"
+    fi
+else
+    fail "default checkout form not found"
+fi
+echo "── Default form OK ──"
+
+# Run scenarios
 for sid in $SCENARIO_IDS; do
     [ -n "$SCENARIO_FILTER" ] && [ "$sid" != "$SCENARIO_FILTER" ] && continue
     run_scenario "$sid"
 done
+
+# ── Cleanup: revert Koha DB to original state ──
+cleanup_issues
+
+# ── Post-flight: verify state matches beginning ──
+echo ""
+echo "── Post-flight check ──"
+for bc in 1301111111 1302079605 1302099999; do
+    local issued
+    issued=$(ssh koha-dev.rot13.org sudo /usr/sbin/koha-mysql ffzg -e "SELECT COUNT(*) FROM issues JOIN items USING (itemnumber) WHERE items.barcode='$bc'" 2>/dev/null || echo "")
+    if echo "$issued" | grep -q "0"; then
+        pass "barcode $bc is not issued — clean"
+    else
+        fail "barcode $bc is still issued"
+    fi
+done
+echo "── Post-flight done ──"
 
 echo ""
 echo "Done."

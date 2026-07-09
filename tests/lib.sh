@@ -196,3 +196,61 @@ check_db() {
     fi
     fail "DB expected '$2' but got: $result"; return 1
 }
+
+# ──────────────────────────────────────────────────────────────────
+# Pre-flight checks — verify Koha DB state before running tests
+# ──────────────────────────────────────────────────────────────────
+pre_flight_check() {
+    echo ""
+    echo "── Pre-flight checks ──"
+
+    # Check all four barcodes exist in Koha DB
+    local barcodes="200000000042 1301111111 1302079605 1302099999"
+    for bc in $barcodes; do
+        local exists
+        exists=$(ssh koha-dev.rot13.org sudo /usr/sbin/koha-mysql ffzg -e "SELECT COUNT(*) FROM items WHERE barcode='$bc'" 2>/dev/null || echo "")
+        if echo "$exists" | grep -q "1"; then
+            info "barcode $bc exists in items"
+        else
+            fail "barcode $bc not found in items"
+            return 1
+        fi
+    done
+    # Check patron exists
+    local patron
+    patron=$(ssh koha-dev.rot13.org sudo /usr/sbin/koha-mysql ffzg -e "SELECT COUNT(*) FROM borrowers WHERE cardnumber='200000000042'" 2>/dev/null || echo "")
+    if echo "$patron" | grep -q "1"; then
+        info "patron 200000000042 exists"
+    else
+        fail "patron 200000000042 not found"
+        return 1
+    fi
+
+    # Check none of the books are currently issued
+    for bc in 1301111111 1302079605 1302099999; do
+        local issued
+        issued=$(ssh koha-dev.rot13.org sudo /usr/sbin/koha-mysql ffzg -e "SELECT COUNT(*) FROM issues JOIN items USING (itemnumber) WHERE items.barcode='$bc'" 2>/dev/null || echo "")
+        if echo "$issued" | grep -q "0"; then
+            info "barcode $bc is not issued — clean"
+        else
+            fail "barcode $bc is currently issued — state not reproducible"
+            return 1
+        fi
+    done
+
+    echo "── Pre-flight OK ──"
+    return 0
+}
+
+# ──────────────────────────────────────────────────────────────────
+# Cleanup — revert Koha DB state to original (delete issues created by tests)
+# ──────────────────────────────────────────────────────────────────
+cleanup_issues() {
+    echo ""
+    echo "── Cleanup ──"
+    # Delete any issues created during testing for our patron
+    local count
+    count=$(ssh koha-dev.rot13.org sudo /usr/sbin/koha-mysql ffzg -e "DELETE FROM issues WHERE borrowernumber=(SELECT borrowernumber FROM borrowers WHERE cardnumber='200000000042')" 2>/dev/null || echo "")
+    info "deleted issues: $count"
+    echo "── Cleanup done ──"
+}
