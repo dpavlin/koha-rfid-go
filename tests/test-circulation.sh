@@ -131,6 +131,9 @@ mock_start
 rodney open "$PAGE_URL"
 rodney waitload
 
+# Clear RFID localStorage state from previous runs
+rodney js "localStorage.removeItem('rfid_afi')"
+
 # -- Pre-flight: verify Koha DB state and default form --
 pre_flight_check
 
@@ -139,12 +142,12 @@ echo ""
 echo "-- Default form check --"
 if rodney exists 'input[name=findborrower]' 2>/dev/null; then
     pass "default checkout form (findborrower) is present"
-    # Test the form works: load a patron tag and verify input is filled
+    # Test the form works: load a patron tag and verify patron is found
     mock_clear
     load_tag "patron"
     sleep 3
-    if check_input_filled 'input[name=findborrower]' 2>/dev/null; then
-        pass "default form works — patron scan fills findborrower"
+    if rodney visible '.patroninfo' 2>/dev/null; then
+        pass "default form works — patron scan finds patron"
     else
         fail "default form not responding to RFID scan" || true
         debug_help
@@ -170,7 +173,6 @@ cleanup_issues
 echo ""
 echo "-- Post-flight check --"
 for bc in 1301111111 1302079605 1302099999; do
-    local issued
     issued=$(ssh koha-dev.rot13.org sudo /usr/sbin/koha-mysql ffzg -e "SELECT COUNT(*) FROM issues JOIN items USING (itemnumber) WHERE items.barcode='$bc'" 2>/dev/null || echo "")
     if echo "$issued" | grep -q "0"; then
         pass "barcode $bc is not issued — clean"

@@ -12,7 +12,7 @@ KOHA_URL="${KOHA_URL:-https://ffzg.koha-dev.rot13.org:8443/cgi-bin/koha}"
 KOHA_USER="${KOHA_USER:-}"
 KOHA_PASS="${KOHA_PASS:-}"
 [ -z "${SKIP_KOHA_LOGIN:-}" ] && [ -z "$KOHA_USER" ] && { echo "ERROR: set KOHA_USER or SKIP_KOHA_LOGIN"; exit 1; }
-[ -z "${SKIP_KOHA_LOGIN:-}" ] && [ -z "$KOHA_PASS" ] && { echo "ERROR: set KOHA_PASS or SKIP_KOHA_LOGIN"; exit 1; }
+[ -z "${SKIP_KOHA_LOGIN:-}" ] && [ -z "$KOHA_PASS" ] && { echo "ERROR: set KOHA_USER or SKIP_KOHA_PASS"; exit 1; }
 MOCK_URL="${MOCK_URL:-https://localhost:9000}"
 RESULTS_FILE="${RESULTS_FILE:-/tmp/rfid-test-results}"
 
@@ -34,6 +34,15 @@ fail()  {
 }
 info()  { echo "  - $*"; }
 result(){ local s="$1"; record_result "$PAGE" "$SCENARIO_ID" "$s"; }
+
+record_result() {
+    local page="$1"
+    local scenario_id="$2"
+    local status="$3"
+    local timestamp
+    timestamp=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+    echo "$timestamp | $page | $scenario_id | $status" >> "$RESULTS_FILE"
+}
 
 # ------------------------------------------------------------------
 # RFID server detection
@@ -157,12 +166,27 @@ load_tag() {
     mock_add "$sid" "$content" "$security"
 }
 
-# ------------------------------------------------------------------
-# Results
-# ------------------------------------------------------------------
-record_result() {
-    local page="$1" sid="$2" status="$3"
-    echo "$page.$sid=$status" >> "$RESULTS_FILE"
+check_popup_contains() {
+    local search="$1"
+    local text
+    text=$(rodney js "document.getElementById('rfid-popup-body')?.innerText || ''" 2>/dev/null)
+    if echo "$text" | grep -qiE "$search"; then
+        pass "popup contains '$search'"
+        return 0
+    fi
+    fail "popup does not contain '$search' (found: '$text')"
+    return 1
+}
+
+check_popup_empty() {
+    local text
+    text=$(rodney js "document.getElementById('rfid-popup-body')?.innerText || ''" 2>/dev/null)
+    if [[ -z "$text" || "$text" == *"(no tags)"* || "$text" == *"no tags in range"* ]]; then
+        pass "popup is empty"
+        return 0
+    fi
+    fail "popup is not empty (found: '$text')"
+    return 1
 }
 
 # ------------------------------------------------------------------
