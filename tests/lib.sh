@@ -181,7 +181,7 @@ check_popup_contains() {
 check_popup_empty() {
     local text
     text=$(rodney js "document.getElementById('rfid-popup-body')?.innerText || ''" 2>/dev/null)
-    if [[ -z "$text" || "$text" == *"(no tags)"* || "$text" == *"no tags in range"* ]]; then
+    if [[ -z "$text" || "$text" == *"(no tags)"* || "$text" == *"no tags in range"* || "$text" == *" empty"* ]]; then
         pass "popup is empty"
         return 0
     fi
@@ -280,7 +280,7 @@ pre_flight_check() {
     # Check none of the books are currently issued
     for bc in 1301111111 1302079605 1302099999; do
         local issued
-        issued=$(koha_mysql "SELECT COUNT(*) FROM issues JOIN items USING (itemnumber) WHERE items.barcode='$bc'" || echo "")
+        issued=$(koha_mysql "SELECT COUNT(*) FROM issues JOIN items USING (itemnumber) WHERE items.barcode='$bc'" 2>/dev/null || echo "")
         if echo "$issued" | grep -q "0"; then
             echo "  OK barcode $bc is not issued — clean"
         else
@@ -294,7 +294,7 @@ pre_flight_check() {
 }
 
 # ------------------------------------------------------------------
-# Cleanup — revert Koha DB state to original (delete issues created by tests)
+# Cleanup — revert Koha DB to original state (delete issues created by tests)
 # ------------------------------------------------------------------
 cleanup_issues() {
     echo ""

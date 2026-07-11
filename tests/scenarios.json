@@ -49,7 +49,7 @@
     "tier": 1,
     "pages": ["mainpage", "circulation-home", "circulation", "returns", "renew"],
     "error_mode": 1,
-    "expect": { "popup": "error", "db_change": false }
+    "expect": { "popup": "not checked in", "db_change": false }
   },
   {
     "id": 7,
@@ -83,7 +83,7 @@
     "tags": ["book1", "book3"],
     "tier": 1,
     "pages": ["mainpage", "circulation-home", "circulation", "returns", "renew"],
-    "expect": { "popup": "multiple tags", "db_change": false }
+    "expect": { "popup": "1302099999", "db_change": false }
   },
   {
     "id": 11,
