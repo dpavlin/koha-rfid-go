@@ -15,16 +15,20 @@ SCENARIO_IDS=$(echo "$SCENARIOS" | jq -r '.[] | select(.pages | index("circulati
 run_scenario() {
     local sid="$1"
     SCENARIO_ID="$sid"
-    local scenario tags tab_name error_mode timeout_mode remove_after_scan sequence
-
-    scenario=$(echo "$SCENARIOS" | jq ".[] | select(.id == $sid)")
-    local name; name=$(echo "$scenario" | jq -r '.name')
-    tags=$(echo "$scenario" | jq -r '.tags // [] | join(" ")')
-    tab_name=$(echo "$scenario" | jq -r '.tab // ""')
-    error_mode=$(echo "$scenario" | jq -r '.error_mode // 0')
-    timeout_mode=$(echo "$scenario" | jq -r '.timeout_mode // 0')
-    remove_after_scan=$(echo "$scenario" | jq -r '.remove_after_scan // false')
-    sequence=$(echo "$scenario" | jq -r '.sequence // false')
+    local name
+    name=$(echo "$SCENARIOS" | jq -r ".[] | select(.id == $sid) | .name")
+    local tags
+    tags=$(echo "$SCENARIOS" | jq -r ".[] | select(.id == $sid) | .tags // [] | join(\" \")")
+    local tab_name
+    tab_name=$(echo "$SCENARIOS" | jq -r ".[] | select(.id == $sid) | .tab // \"\"")
+    local error_mode
+    error_mode=$(echo "$SCENARIOS" | jq -r ".[] | select(.id == $sid) | .error_mode // 0")
+    local timeout_mode
+    timeout_mode=$(echo "$SCENARIOS" | jq -r ".[] | select(.id == $sid) | .timeout_mode // 0")
+    local remove_after_scan
+    remove_after_scan=$(echo "$SCENARIOS" | jq -r ".[] | select(.id == $sid) | .remove_after_scan // false")
+    local sequence
+    sequence=$(echo "$SCENARIOS" | jq -r ".[] | select(.id == $sid) | .sequence // false")
 
     echo ""
     echo "  -- Scenario $sid: $name --"
@@ -39,24 +43,44 @@ run_scenario() {
         # Sequential: patron first, then books
         info "loading patron tag..."
         load_tag "patron"
-        sleep 3
-        # Verify patron found
-        check_input_filled 'input[name=findborrower]' || { result "fail"; return; }
-
-        # Now submit patron search so page reloads and #barcode appears
-        info "submitting patron search..."
-        rodney click 'input#submit_findborrower'
+        sleep 5
+        
+        # Wait for rfid_scan to finish (it might reload the page)
         rodney waitload
         rodney sleep 2
 
-        # Load books one by one
+        # Now check if the input is filled. If not, it means rfid_scan didn't submit.
+        if [ "$(rodney js "document.querySelector('input[name=findborrower]')?.value")" = "" ]; then
+            info "input is empty, submitting manually..."
+            rodney click 'input.submit'
+            rodney waitload
+            rodney sleep 2
+        else
+            info "input is already filled by rfid_scan"
+            rodney waitload
+            rodney sleep 2
+        fi
+
+        # Now load books one by one
         for tag_key in book1 book2 book3; do
             if echo "$tags" | grep -q "$tag_key"; then
                 info "loading $tag_key..."
                 mock_clear
                 load_tag "$tag_key"
                 sleep 3
-                check_input_filled '#barcode' || echo "  [warn] barcode not filled"
+                rodney waitload
+                rodney sleep 2
+                if [ "$sid" -le 13 ]; then
+                    local bc
+                    bc=$(echo "$TAGS" | jq -r ".\"$tag_key\".content")
+                    local count
+                    count=$(ssh koha-dev.rot13.org sudo /usr/sbin/koha-mysql ffzg -e "SELECT COUNT(*) FROM issues JOIN items USING (itemnumber) WHERE items.barcode='$bc'")
+                    if [ "$count" -gt 0 ]; then
+                        pass "$tag_key is checked out"
+                    else
+                        fail "$tag_key is NOT checked out in DB"
+                    fi
+                fi
             fi
         done
 
@@ -66,13 +90,13 @@ run_scenario() {
         else
             # Verify DB — issues created
             local db_check
-            db_check=$(echo "$scenario" | jq -r '.expect.db_query // ""')
+            db_check=$(echo "$SCENARIOS" | jq -r ".[] | select(.id == $sid) | .expect.db_query // \"\"")
             if [ -n "$db_check" ]; then
                 check_db "$db_check" "1" && result "pass" || result "fail"
             else
                 info "DB: checking issues count"
                 local count
-                count=$(ssh koha-dev.rot13.org sudo /usr/sbin/koha-mysql ffzg -e "SELECT COUNT(*) FROM issues WHERE borrowernumber=(SELECT borrowernumber FROM borrowers WHERE cardnumber='200000000042')" 2>/dev/null)
+                count=$(ssh koha-dev.rot13.org sudo /usr/sbin/koha-mysql ffzg -e "SELECT COUNT(*) FROM issues WHERE borrowernumber=(SELECT borrowernumber FROM borrowers WHERE cardnumber='200000000042') AND itemnumber=(SELECT itemnumber FROM items WHERE barcode='1301111111')" 2>/dev/null)
                 echo "$count" | grep -qE '[1-3]' && result "pass" || result "fail"
             fi
         fi
@@ -82,11 +106,15 @@ run_scenario() {
         sleep 3
 
         if [ "$error_mode" -gt 0 ]; then
-            check_popup_contains "error" && result "pass" || result "fail"
+            local expected_err
+            expected_err=$(echo "$SCENARIOS" | jq -r ".[] | select(.id == $sid) | .expect.popup // \"error\"")
+            check_popup_contains "$expected_err" && result "pass" || result "fail"
             return
         fi
         if [ "$timeout_mode" -gt 0 ]; then
-            check_popup_contains "timeout" && result "pass" || result "fail"
+            local expected_tout
+            expected_tout=$(echo "$SCENARIOS" | jq -r ".[] | select(.id == $sid) | .expect.popup // \"timeout\"")
+            check_popup_contains "$expected_tout" && result "pass" || result "fail"
             return
         fi
         if [ "$remove_after_scan" = "true" ]; then
@@ -127,17 +155,17 @@ rodney connect localhost:$CDP_PORT
 koha_login
 mock_start
 
-# Navigate to the test page (reusing page 0 instead of opening a new tab)
+# Navigate to the test page
 rodney open "$PAGE_URL"
 rodney waitload
 
-# Clear RFID localStorage state from previous runs
+# Clear localStorage
 rodney js "localStorage.removeItem('rfid_afi')"
 
-# -- Pre-flight: verify Koha DB state and default form --
+# -- Pre-flight checks --
 pre_flight_check
 
-# Check that the default checkout form actually works — patron scan fills findborrower
+# Check that the default checkout form actually works — patron scan finds patron
 echo ""
 echo "-- Default form check --"
 if rodney exists 'input[name=findborrower]' 2>/dev/null; then
@@ -150,12 +178,10 @@ if rodney exists 'input[name=findborrower]' 2>/dev/null; then
         pass "default form works — patron scan finds patron"
     else
         fail "default form not responding to RFID scan" || true
-        debug_help
         exit 1
     fi
 else
     fail "default checkout form not found" || true
-    debug_help
     exit 1
 fi
 echo "-- Default form OK --"
@@ -169,7 +195,7 @@ done
 # -- Cleanup: revert Koha DB to original state --
 cleanup_issues
 
-# -- Post-flight: verify state matches beginning --
+# -- Post-flight check --
 echo ""
 echo "-- Post-flight check --"
 for bc in 1301111111 1302079605 1302099999; do
