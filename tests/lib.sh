@@ -216,7 +216,7 @@ debug_help() {
 # ------------------------------------------------------------------
 # DOM checks
 check_db() {
-    local result; result=$(koha_mysql "$1" 2>/dev/null || echo "")
+    local result; result=$(koha_mysql "$1" 2>/dev/null | tail -n 1 | tr -d '\r')
     if echo "$result" | grep -q "$2" 2>/dev/null; then
         pass "DB: $2"; return 0
     fi

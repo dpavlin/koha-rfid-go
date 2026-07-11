@@ -5,41 +5,59 @@ set -eu
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 source "$SCRIPT_DIR/lib.sh"
 
-# --- Setup ---
-mock_start
-koha_login
-rodney open "$KOHA_URL/circ/circulation.pl"
-rodney waitload
-rodney js "localStorage.removeItem('rfid_afi')"
-pre_flight_check
+# --- Helpers ---
 
-# --- Scenario 1: Patron Scan ---
+setup() {
+    echo "--------------------------------------------------"
+    echo "Setting up environment..."
+    mock_start
+    koha_login
+    rodney open "$KOHA_URL/circ/circulation.pl"
+    rodney waitload
+    rodney js "localStorage.removeItem('rfid_afi')"
+    pre_flight_check
+}
+
+teardown() {
+    cleanup_issues
+    echo "--------------------------------------------------"
+}
+
+# --- Scenarios ---
+
+# Scenario 1: Patron Scan
 echo "Running Scenario: Patron Scan"
+setup
 tab_switch "checkout"
-mock_add "patron" "200000000042" "DA"
-rodney sleep 2
+load_tag "patron"
+rodney sleep 3
 rodney waitload
-# Verify the tag was seen by checking local storage (as per user suggestion)
-rodney js "JSON.parse(localStorage.getItem('rfid_afi'))['200000000042']" | grep -q "patron"
-echo "Patron tag detected in localStorage."
 
-# --- Scenario 2: Checkout Book ---
+# Check that tag was seen in localStorage as per user instruction
+if rodney js "JSON.parse(localStorage.getItem('rfid_afi'))['200000000042']?.sec === 'patron'"; then
+    echo "  OK: Patron tag detected in localStorage."
+else
+    echo "  DEBUG: localStorage content is: $(rodney js "localStorage.getItem('rfid_afi')")"
+    fail "  FAIL: Patron tag NOT detected in localStorage."
+fi
+
+# Scenario 2: Checkout Book
 echo "Running Scenario: Checkout Book"
 mock_clear
-mock_add "book1" "1301111111" "DA"
-rodney sleep 2
+load_tag "book1"
+rodney sleep 3
 rodney waitload
-# Check DB for successful checkout
 check_db "SELECT COUNT(*) FROM issues WHERE itemnumber=(SELECT itemnumber FROM items WHERE barcode='1301111111')" "1"
+teardown
 
-# --- Scenario 3: Checkin Book ---
+# Scenario 3: Checkin Book
 echo "Running Scenario: Checkin Book"
+setup
 tab_switch "checkin"
-mock_add "book1" "1301111111" "DA"
-rodney sleep 2
+load_tag "book1"
+rodney sleep 3
 rodney waitload
 check_popup_contains "1301111111"
+teardown
 
-# --- Cleanup ---
-cleanup_issues
-echo "All tests completed successfully."
+echo "All tests completed."
