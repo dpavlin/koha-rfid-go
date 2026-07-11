@@ -71,7 +71,7 @@ func Scan(ops RfidOps) (*ScanResult, error) {
 
 		afi, err := ops.ReadAfi(tag)
 		if err == nil {
-			info.Security = hex.EncodeToString([]byte{afi})
+			info.Security = strings.ToUpper(hex.EncodeToString([]byte{afi}))
 		}
 
 		blocks, err := ops.ReadBlocks(tag, 0, 8)

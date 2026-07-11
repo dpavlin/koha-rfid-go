@@ -618,7 +618,7 @@ function rfid_scan(data) {
 					rfid_afi_set(t.content, 'patron', null);
 					var pb = $('input[name=findborrower]');
 					if ( pb.is(':visible') ) {
-						pb.val( t.content ).parent().submit();
+						var el = pb[0]; el.value = t.content; el.closest('form').submit();
 					}
 				}
 			}

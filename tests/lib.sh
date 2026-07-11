@@ -306,6 +306,8 @@ cleanup_issues() {
         local count
         count=$(koha_mysql "DELETE FROM issues WHERE borrowernumber=$patron_id AND itemnumber=(SELECT itemnumber FROM items WHERE barcode='$bc')" || echo "")
         echo "  barcode $bc: deleted $count issue(s)"
+        # Also clear the onloan field in items table (Koha doesn't do this automatically)
+        koha_mysql "UPDATE items SET onloan=NULL WHERE barcode='$bc' AND onloan IS NOT NULL" >/dev/null 2>&1
     done
     echo "-- Cleanup done --"
 }

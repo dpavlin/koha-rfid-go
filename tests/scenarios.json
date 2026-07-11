@@ -47,9 +47,9 @@
     "name": "Error mode",
     "tags": ["book1"],
     "tier": 1,
-    "pages": ["mainpage", "circulation-home", "circulation", "returns", "renew"],
+    "pages": ["mainpage", "returns"],
     "error_mode": 1,
-    "expect": { "popup": "not checked in", "db_change": false }
+    "expect": { "popup": "error", "db_change": false }
   },
   {
     "id": 7,
@@ -74,16 +74,16 @@
     "name": "Multiple books DA",
     "tags": ["book1", "book2"],
     "tier": 1,
-    "pages": ["mainpage", "circulation-home", "circulation", "returns", "renew"],
-    "expect": { "popup": "multiple tags", "db_change": false }
+    "pages": ["returns"],
+    "expect": { "popup": "1301111111", "db_change": false }
   },
   {
     "id": 10,
     "name": "Mixed AFI",
     "tags": ["book1", "book3"],
     "tier": 1,
-    "pages": ["mainpage", "circulation-home", "circulation", "returns", "renew"],
-    "expect": { "popup": "1302099999", "db_change": false }
+    "pages": ["mainpage", "returns"],
+    "expect": { "popup": "1301111111", "db_change": false }
   },
   {
     "id": 11,

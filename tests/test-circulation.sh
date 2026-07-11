@@ -34,6 +34,7 @@ run_scenario() {
     echo "  -- Scenario $sid: $name --"
 
     mock_clear
+    rodney js "localStorage.removeItem('rfid_afi')" 2>/dev/null
     [ "$error_mode" -gt 0 ] && mock_error "$error_mode"
     [ "$timeout_mode" -gt 0 ] && mock_timeout 100
 
@@ -52,7 +53,7 @@ run_scenario() {
         # Now check if the input is filled. If not, it means rfid_scan didn't submit.
         if [ "$(rodney js "document.querySelector('input[name=findborrower]')?.value")" = "" ]; then
             info "input is empty, submitting manually..."
-            rodney click 'input.submit'
+            rodney js "window.location.href = window.location.pathname + '?findborrower=200000000042&Submit=Submit'"
             rodney waitload
             rodney sleep 2
         else
@@ -71,14 +72,17 @@ run_scenario() {
                 rodney waitload
                 rodney sleep 2
                 if [ "$sid" -le 13 ]; then
-                    local bc
-                    bc=$(echo "$TAGS" | jq -r ".\"$tag_key\".content")
-                    local count
-                    count=$(ssh koha-dev.rot13.org sudo /usr/sbin/koha-mysql ffzg -e "SELECT COUNT(*) FROM issues JOIN items USING (itemnumber) WHERE items.barcode='$bc'")
-                    if [ "$count" -gt 0 ]; then
-                        pass "$tag_key is checked out"
-                    else
-                        fail "$tag_key is NOT checked out in DB"
+                    # Only check DA books (book1, book2) — book3 has D7 (on loan) and won't checkout
+                    if echo "$tag_key" | grep -qE "^book[12]$"; then
+                        local bc
+                        bc=$(echo "$TAGS" | jq -r ".\"$tag_key\".content")
+                        local count
+                        count=$(koha_mysql "SELECT COUNT(*) FROM issues JOIN items USING (itemnumber) WHERE items.barcode='$bc'")
+                        if echo "$count" | grep -qE '[1-3]'; then
+                            pass "$tag_key is checked out"
+                        else
+                            fail "$tag_key is NOT checked out in DB"
+                        fi
                     fi
                 fi
             fi
@@ -96,7 +100,7 @@ run_scenario() {
             else
                 info "DB: checking issues count"
                 local count
-                count=$(ssh koha-dev.rot13.org sudo /usr/sbin/koha-mysql ffzg -e "SELECT COUNT(*) FROM issues WHERE borrowernumber=(SELECT borrowernumber FROM borrowers WHERE cardnumber='200000000042') AND itemnumber=(SELECT itemnumber FROM items WHERE barcode='1301111111')" 2>/dev/null)
+                count=$(koha_mysql "SELECT COUNT(*) FROM issues WHERE borrowernumber=(SELECT borrowernumber FROM borrowers WHERE cardnumber='200000000042') AND itemnumber=(SELECT itemnumber FROM items WHERE barcode='1301111111')")
                 echo "$count" | grep -qE '[1-3]' && result "pass" || result "fail"
             fi
         fi
@@ -135,13 +139,20 @@ run_scenario() {
             return
         fi
         # Check popup shows barcode content (the 130... number) for book tags
-        local first_content
-        first_content=$(echo "$tags" | awk '{print $1}' | while read -r key; do echo "$TAGS" | jq -r ".\"$key\".content" 2>/dev/null; done)
-        if [ -n "$first_content" ]; then
-            check_popup_contains "$first_content" && result "pass" || result "fail"
+        # Use scenario's expect.popup if defined, otherwise check first tag's content
+        local expected_popup
+        expected_popup=$(echo "$SCENARIOS" | jq -r ".[] | select(.id == $sid) | .expect.popup // \"\"")
+        if [ -n "$expected_popup" ]; then
+            check_popup_contains "$expected_popup" && result "pass" || result "fail"
         else
-            # patron tag — check for "patron" in popup
-            check_popup_contains "patron" && result "pass" || result "fail"
+            local first_content
+            first_content=$(echo "$tags" | awk '{print $1}' | while read -r key; do echo "$TAGS" | jq -r ".\"$key\".content" 2>/dev/null; done)
+            if [ -n "$first_content" ]; then
+                check_popup_contains "$first_content" && result "pass" || result "fail"
+            else
+                # patron tag — check for "patron" in popup
+                check_popup_contains "patron" && result "pass" || result "fail"
+            fi
         fi
     fi
 }
@@ -199,7 +210,7 @@ cleanup_issues
 echo ""
 echo "-- Post-flight check --"
 for bc in 1301111111 1302079605 1302099999; do
-    issued=$(ssh koha-dev.rot13.org sudo /usr/sbin/koha-mysql ffzg -e "SELECT COUNT(*) FROM issues JOIN items USING (itemnumber) WHERE items.barcode='$bc'" 2>/dev/null || echo "")
+    issued=$(koha_mysql "SELECT COUNT(*) FROM issues JOIN items USING (itemnumber) WHERE items.barcode='$bc'" || echo "")
     if echo "$issued" | grep -q "0"; then
         pass "barcode $bc is not issued — clean"
     else
