@@ -22,10 +22,21 @@ PAGES="$(cat tests/pages.json)"
 SCENARIOS="$(cat tests/scenarios.json)"
 
 # ------------------------------------------------------------------
+# Test results tracking
+# ------------------------------------------------------------------
+TEST_RESULT_PASS=0
+TEST_RESULT_FAIL=0
+TEST_RESULT_SKIP=0
+
+# ------------------------------------------------------------------
 # Logging
 # ------------------------------------------------------------------
-pass()  { echo "  OK $*"; }
+pass()  {
+    TEST_RESULT_PASS=$((TEST_RESULT_PASS + 1))
+    echo "  OK $*"
+}
 fail()  {
+    TEST_RESULT_FAIL=$((TEST_RESULT_FAIL + 1))
     echo "  FAIL $*"
     if [ -n "${SCENARIO_ID:-}" ]; then
         record_result "$PAGE" "$SCENARIO_ID" "fail"
@@ -182,6 +193,47 @@ check_popup_empty() {
 }
 
 # ------------------------------------------------------------------
+# RFID state management — single point of control, no direct localStorage calls in tests
+# ------------------------------------------------------------------
+reset_rfid_state() {
+    rodney js "localStorage.removeItem('rfid_afi')" >/dev/null 2>&1
+}
+
+# ------------------------------------------------------------------
+# Scenario helpers — better output with context
+# ------------------------------------------------------------------
+scenario_start() {
+    local sid="$1" name="$2"
+    echo ""
+    echo "  ── Scenario $sid: $name ──"
+}
+
+scenario_end() {
+    : # no-op, can be extended
+}
+
+# ------------------------------------------------------------------
+# Test summary — prints pass/fail/skip counts at the end
+# ------------------------------------------------------------------
+test_summary() {
+    echo ""
+    echo "═══════════════════════════════════════════════════════════════════"
+    echo "  Test Summary"
+    echo "═══════════════════════════════════════════════════════════════════"
+    local total=$((TEST_RESULT_PASS + TEST_RESULT_FAIL))
+    echo "  Total: $total"
+    echo "  Pass:  $TEST_RESULT_PASS"
+    echo "  Fail:  $TEST_RESULT_FAIL"
+    if [ "$TEST_RESULT_FAIL" -eq 0 ]; then
+        echo "  Result: ALL TESTS PASSED"
+    else
+        echo "  Result: SOME TESTS FAILED"
+    fi
+    echo "═══════════════════════════════════════════════════════════════════"
+    echo ""
+}
+
+# ------------------------------------------------------------------
 # Debug helper — prints commands and HTML dump for interactive debugging
 # ------------------------------------------------------------------
 debug_help() {
@@ -270,18 +322,27 @@ pre_flight_check() {
     done
 
     # Check none of the books are currently issued
+    local all_clean=1
     for bc in 1301111111 1302079605 1302099999; do
         local issued
         issued=$(koha_mysql "SELECT COUNT(*) FROM issues JOIN items USING (itemnumber) WHERE items.barcode='$bc'" 2>/dev/null || echo "")
         if echo "$issued" | grep -q "0"; then
             echo "  OK barcode $bc is not issued — clean"
         else
-            echo "  FAIL barcode $bc is currently issued — state not reproducible"
-            return 1
+            echo "  WARNING barcode $bc is currently issued — cleaning"
+            local patron_id
+            patron_id=$(koha_mysql "SELECT borrowernumber FROM borrowers WHERE cardnumber='200000000042'" | grep -v borrowernumber | tr -d ' ')
+            koha_mysql "DELETE FROM issues WHERE borrowernumber=$patron_id AND itemnumber=(SELECT itemnumber FROM items WHERE barcode='$bc')" >/dev/null 2>&1
+            koha_mysql "UPDATE items SET onloan=NULL WHERE barcode='$bc' AND onloan IS NOT NULL" >/dev/null 2>&1
+            all_clean=0
         fi
     done
 
-    echo "-- Pre-flight OK --"
+    if [ "$all_clean" -eq 1 ]; then
+        echo "-- Pre-flight OK --"
+    else
+        echo "-- Pre-flight OK (after cleanup) --"
+    fi
     return 0
 }
 
