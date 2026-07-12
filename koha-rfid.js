@@ -670,5 +670,6 @@ $(document).ready( function() {
 	// Remove old event log key (migrated to AFI map in v2.0)
 	localStorage.removeItem('rfid_events');
 	rfid_timeout = null;
+	rfid_poll_pending = false;
 	rfid_poll();
 });

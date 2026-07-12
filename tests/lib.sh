@@ -78,18 +78,10 @@ check_rfid_server() {
 # If a real reader is running, stop it first so mock can take over.
 # ------------------------------------------------------------------
 mock_start() {
-    # Check server.sh status — it prints mode (mock or real)
-    local status
-    status=$(./server.sh status 2>/dev/null || echo "")
-    if echo "$status" | grep -q "mode: mock"; then
-        echo "  → Mock server already running — reusing"
-        return 0
-    fi
-    if echo "$status" | grep -q "mode: real"; then
-        echo "  → Stopping real server so mock can start"
-        ./server.sh stop
-        sleep 1
-    fi
+    # Always restart mock server to ensure clean state
+    ./server.sh stop 2>/dev/null
+    rm -f /tmp/koha-rfid-server.pid
+    sleep 1
     ./server.sh start --mock || return 1
 }
 

@@ -38,6 +38,14 @@ run_scenario() {
     [ "$error_mode" -gt 0 ] && mock_error "$error_mode"
     [ "$timeout_mode" -gt 0 ] && mock_timeout 100
 
+    if [ "$sequence" = "true" ] && [ "$sid" -ge 11 ] && [ "$sid" -le 14 ]; then
+        # Refresh to clean state before sequential scans
+        rodney open "$PAGE_URL"
+        rodney waitload
+        rodney sleep 2
+        rodney js "localStorage.removeItem('rfid_afi')" 2>/dev/null
+    fi
+
     tab_switch "$tab_name"
 
     if [ "$sequence" = "true" ] && [ "$sid" -ge 11 ] && [ "$sid" -le 14 ]; then
@@ -61,6 +69,9 @@ run_scenario() {
             rodney waitload
             rodney sleep 2
         fi
+
+        # Switch to checkout tab to ensure the checkout form is visible
+        tab_switch "checkout"
 
         # Now load books one by one
         for tag_key in book1 book2 book3; do
