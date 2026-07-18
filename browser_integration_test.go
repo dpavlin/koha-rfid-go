@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"net/url"
 	"os"
 	"testing"
 	"time"
@@ -31,8 +32,8 @@ import (
 //     go test -v -run Browser -timeout 120s
 // ---------------------------------------------------------------------------
 
-var kohaURL       = "https://ffzg.koha-dev.rot13.org:8443/cgi-bin/koha/mainpage.pl"
-var rfidPort      = "9000"
+var kohaURL = "https://ffzg.koha-dev.rot13.org:8443/cgi-bin/koha/mainpage.pl"
+var rfidPort = "9000"
 var circulationURL = "https://ffzg.koha-dev.rot13.org:8443/cgi-bin/koha/circ/circulation.pl"
 
 func init() {
@@ -84,6 +85,18 @@ func startRFIDServer(t *testing.T) func() {
 	t.Logf("RFID reader hardware version: %s", hwVer)
 
 	server := NewHttpServer("localhost:"+rfidPort, reader, false)
+	kohaParsedURL, err := url.Parse(kohaURL)
+	if err != nil || kohaParsedURL.Scheme == "" || kohaParsedURL.Host == "" {
+		reader.Close()
+		t.Fatalf("invalid KOHA_URL %q", kohaURL)
+	}
+	server.SetAllowedOrigin(kohaParsedURL.Scheme + "://" + kohaParsedURL.Host)
+	cert, key, err := genSelfSignedCert()
+	if err != nil {
+		reader.Close()
+		t.Fatalf("generate TLS certificate: %v", err)
+	}
+	server.SetTLS(cert, key)
 	go func() {
 		if err := server.Run(); err != nil {
 			t.Logf("RFID server error: %v", err)

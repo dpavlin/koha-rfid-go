@@ -181,8 +181,13 @@ function afi_color(sec) {
 // ---------------------------------------------------------------------------
 
 function rfid_secure(barcode, sid, target) {
-	var url = rfid_base_url + '/secure?' + sid + '=' + target;
-	rfid_fetch(url, 15000).then(function(r) {
+	var body = new URLSearchParams();
+	body.append(sid, target);
+	rfid_fetch(rfid_base_url + '/secure', 15000, {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'X-RFID-Client': 'koha-rfid' },
+		body: body.toString()
+	}).then(function(r) {
 		if ( r.status == 200 ) {
 			rfid_afi_clear_pending(barcode);
 		}
@@ -335,10 +340,12 @@ function rfid_show_error(msg, hint) {
 	// with AFI map content. The next poll cycle will update the popup.
 }
 
-function rfid_fetch(url, timeout_ms) {
+function rfid_fetch(url, timeout_ms, options) {
 	var controller = new AbortController();
 	var timer = setTimeout(function() { controller.abort(); }, timeout_ms);
-	return fetch(url, { signal: controller.signal }).then(function(r) {
+	options = options || {};
+	options.signal = controller.signal;
+	return fetch(url, options).then(function(r) {
 		clearTimeout(timer);
 		return r;
 	}).catch(function(e) {
@@ -424,10 +431,10 @@ function rfid_scan(data) {
 	// Tab detection — different Koha pages use different tab ids.
 	// On circulation-home.pl: checkout tab is #circ_search, renew tab is #renew_search.
 	var checkin_active  = $('#checkin_search').attr('aria-hidden') == 'false';
+	var renew_active    = $('#renew_search').attr('aria-hidden') == 'false';
 	var checkout_active = $('#checkout_search').attr('aria-hidden') == 'false' ||
 	$('#circ_search').attr('aria-hidden') == 'false' ||
 	(circulation && !checkin_active && !renew_active);
-	var renew_active    = $('#renew_search').attr('aria-hidden') == 'false';
 	window.rfidDebugLogs = window.rfidDebugLogs || [];
 	window.rfidDebugLogs.push('rfid_scan: diagnosis: ' + JSON.stringify({ url: url, circ: circulation, checkout: checkout_active, checkin: checkin_active, renew: renew_active }));
 	console.log('rfid_scan: diagnosis:', { url: url, circ: circulation, checkout: checkout_active, checkin: checkin_active, renew: renew_active });

@@ -262,7 +262,8 @@ func TestIntegrationHandleSecure(t *testing.T) {
 
 	// Set AFI to DA (secure)
 	sid := tags[0]
-	req := httptest.NewRequest("GET", fmt.Sprintf("/secure?%s=DA", sid), nil)
+	req := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/secure?%s=DA", sid), nil)
+	req.Header.Set("X-RFID-Client", "koha-rfid")
 	w := httptest.NewRecorder()
 	server.handleSecure(w, req)
 
@@ -294,7 +295,8 @@ func TestIntegrationHandleProgram(t *testing.T) {
 	server := NewHttpServer("", reader, false)
 
 	sid := tags[0]
-	req := httptest.NewRequest("GET", fmt.Sprintf("/program?%s=TestIntHTTP", sid), nil)
+	req := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/program?%s=TestIntHTTP", sid), nil)
+	req.Header.Set("X-RFID-Client", "koha-rfid")
 	w := httptest.NewRecorder()
 	server.handleProgram(w, req)
 
@@ -317,4 +319,3 @@ func TestIntegrationHandleProgram(t *testing.T) {
 
 // ---------------------------------------------------------------------------
 // Helper to run integration tests with logging
-

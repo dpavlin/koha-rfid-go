@@ -58,6 +58,9 @@ func main() {
 	if len(sid) != 16 {
 		log.Fatalf("SID must be 16 hex chars, got %q (len=%d)", sid, len(sid))
 	}
+	if len([]byte(content)) > 16 {
+		log.Fatalf("barcode content must be at most 16 bytes for RFID501, got %d", len([]byte(content)))
+	}
 
 	reader, err := rfid.NewRfidReader(*comPort, *debug)
 	if err != nil {

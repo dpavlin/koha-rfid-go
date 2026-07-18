@@ -116,6 +116,11 @@ func Program(ops RfidOps, opsList []ProgramOp) *ProgramResult {
 	for _, op := range opsList {
 		tag := strings.ToUpper(op.SID)
 		content := op.Content
+		if len([]byte(content)) > 16 {
+			res.OK = 0
+			res.Errors = append(res.Errors, fmt.Sprintf("content for %s exceeds the RFID501 16-byte limit", tag))
+			continue
+		}
 
 		if strings.ToLower(content) == "blank" {
 			blocksHex := rfid.BlankRFID501()

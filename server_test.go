@@ -15,12 +15,12 @@ import (
 // Stub RfidOps for tests
 
 type stubOps struct {
-	rfidops.RfidOps                   // embed interface so we only override what we need
-	inventoryFn    func() ([]string, error)
-	readAfiFn      func(tag string) (byte, error)
-	readBlocksFn   func(tag string, start, count int) (map[int]string, error)
-	writeBlocksFn  func(tag string, data string) error
-	writeAfiFn     func(tag string, afi byte) error
+	rfidops.RfidOps // embed interface so we only override what we need
+	inventoryFn     func() ([]string, error)
+	readAfiFn       func(tag string) (byte, error)
+	readBlocksFn    func(tag string, start, count int) (map[int]string, error)
+	writeBlocksFn   func(tag string, data string) error
+	writeAfiFn      func(tag string, afi byte) error
 }
 
 func (m stubOps) Inventory() ([]string, error) {
@@ -65,8 +65,8 @@ func (m stubOps) InventoryWithReset() ([]string, error) {
 	return nil, nil
 }
 
-func (m stubOps) Lock()    {}
-func (m stubOps) Unlock()  {}
+func (m stubOps) Lock()   {}
+func (m stubOps) Unlock() {}
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -79,6 +79,12 @@ func newTestServer(listen string) *HttpServer {
 // newTestServerWithOps creates an HttpServer with a custom stubOps.
 func newTestServerWithOps(m stubOps) *HttpServer {
 	return NewHttpServer("", m, false)
+}
+
+func newWriteRequest(path string) *http.Request {
+	req := httptest.NewRequest(http.MethodPost, path, nil)
+	req.Header.Set("X-RFID-Client", "koha-rfid")
+	return req
 }
 
 // ---------------------------------------------------------------------------
@@ -164,7 +170,7 @@ func TestHandleSecureSuccess(t *testing.T) {
 		},
 	}
 	server := newTestServerWithOps(m)
-	req := httptest.NewRequest("GET", "/secure?E2001234567890AB=DA", nil)
+	req := newWriteRequest("/secure?E2001234567890AB=DA")
 	w := httptest.NewRecorder()
 	server.handleSecure(w, req)
 
@@ -180,7 +186,7 @@ func TestHandleSecureError(t *testing.T) {
 		},
 	}
 	server := newTestServerWithOps(m)
-	req := httptest.NewRequest("GET", "/secure?E2001234567890AB=DA", nil)
+	req := newWriteRequest("/secure?E2001234567890AB=DA")
 	w := httptest.NewRecorder()
 	server.handleSecure(w, req)
 
@@ -252,7 +258,7 @@ func TestHandleSecureNonReader(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			req := httptest.NewRequest("GET", "/secure?"+tt.query, nil)
+			req := newWriteRequest("/secure?" + tt.query)
 			w := httptest.NewRecorder()
 			server.handleSecure(w, req)
 
@@ -331,7 +337,7 @@ func TestHandleProgramNonReader(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			req := httptest.NewRequest("GET", "/program?"+tt.query, nil)
+			req := newWriteRequest("/program?" + tt.query)
 			w := httptest.NewRecorder()
 			server.handleProgram(w, req)
 
@@ -373,7 +379,7 @@ func TestHandleProgramSuccess(t *testing.T) {
 		},
 	}
 	server := newTestServerWithOps(m)
-	req := httptest.NewRequest("GET", "/program?E2001234567890AB=1301234567", nil)
+	req := newWriteRequest("/program?E2001234567890AB=1301234567")
 	w := httptest.NewRecorder()
 	server.handleProgram(w, req)
 
@@ -401,7 +407,7 @@ func TestHandleProgramError(t *testing.T) {
 		},
 	}
 	server := newTestServerWithOps(m)
-	req := httptest.NewRequest("GET", "/program?E2001234567890AB=1301234567", nil)
+	req := newWriteRequest("/program?E2001234567890AB=1301234567")
 	w := httptest.NewRecorder()
 	server.handleProgram(w, req)
 
@@ -438,20 +444,61 @@ func TestRunMuxRegistration(t *testing.T) {
 	// Verify each handler responds (we don't start the server, just check routing)
 	tests := []struct {
 		path     string
+		method   string
 		wantCode int
 	}{
-		{"/", 200},
-		{"/scan/", 200},
-		{"/secure", 200},
-		{"/program", 200},
+		{"/", http.MethodGet, 200},
+		{"/scan/", http.MethodGet, 200},
+		{"/secure", http.MethodPost, 200},
+		{"/program", http.MethodPost, 200},
 	}
 
 	for _, tt := range tests {
-		req := httptest.NewRequest("GET", tt.path, nil)
+		req := httptest.NewRequest(tt.method, tt.path, nil)
+		if tt.method == http.MethodPost {
+			req.Header.Set("X-RFID-Client", "koha-rfid")
+		}
 		w := httptest.NewRecorder()
 		mux.ServeHTTP(w, req)
 		if w.Code != tt.wantCode {
 			t.Errorf("%s status = %d, want %d", tt.path, w.Code, tt.wantCode)
 		}
+	}
+}
+
+func TestWriteEndpointsRequirePostClientHeader(t *testing.T) {
+	server := newTestServer("")
+	for _, path := range []string{"/secure", "/program"} {
+		w := httptest.NewRecorder()
+		serverHandler := http.HandlerFunc(server.handleSecure)
+		if path == "/program" {
+			serverHandler = server.handleProgram
+		}
+		serverHandler.ServeHTTP(w, httptest.NewRequest(http.MethodGet, path, nil))
+		if w.Code != http.StatusMethodNotAllowed {
+			t.Errorf("%s status = %d, want %d", path, w.Code, http.StatusMethodNotAllowed)
+		}
+	}
+}
+
+func TestCORSPolicy(t *testing.T) {
+	server := newTestServer("")
+	server.SetAllowedOrigin("https://koha.example.org/")
+
+	allowed := httptest.NewRecorder()
+	allowedReq := httptest.NewRequest(http.MethodOptions, "/secure", nil)
+	allowedReq.Header.Set("Origin", "https://koha.example.org")
+	if !server.corsHeader(allowed, allowedReq) {
+		t.Fatal("configured origin was rejected")
+	}
+	if got := allowed.Header().Get("Access-Control-Allow-Origin"); got != "https://koha.example.org" {
+		t.Errorf("allow origin = %q", got)
+	}
+
+	denied := httptest.NewRecorder()
+	deniedReq := httptest.NewRequest(http.MethodOptions, "/secure", nil)
+	deniedReq.Header.Set("Origin", "https://untrusted.example.org")
+	if server.corsHeader(denied, deniedReq) {
+		t.Fatal("unconfigured origin was allowed")
 	}
 }

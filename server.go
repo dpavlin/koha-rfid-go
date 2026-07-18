@@ -25,18 +25,26 @@ func (lw *loggingResponseWriter) WriteHeader(code int) {
 
 // HttpServer provides the local HTTP API for the Koha JavaScript integration.
 type HttpServer struct {
-	listen  string
-	rfidOps rfidops.RfidOps
-	debug   bool
-	tlsCert string // path to TLS cert (if empty, serve HTTP)
-	tlsKey  string // path to TLS key
+	listen        string
+	rfidOps       rfidops.RfidOps
+	debug         bool
+	allowedOrigin string // Koha origin permitted to make browser API requests
+	tlsCert       string // path to TLS cert (if empty, serve HTTP)
+	tlsKey        string // path to TLS key
+}
+
+// SetAllowedOrigin restricts browser access to one Koha origin. An empty value
+// disables cross-origin browser access; command-line clients without Origin are
+// unaffected, but write endpoints still require their client header.
+func (s *HttpServer) SetAllowedOrigin(origin string) {
+	s.allowedOrigin = strings.TrimRight(origin, "/")
 }
 
 func NewHttpServer(listen string, ops rfidops.RfidOps, debug bool) *HttpServer {
 	return &HttpServer{
-		listen:   listen,
-		rfidOps:  ops,
-		debug:    debug,
+		listen:  listen,
+		rfidOps: ops,
+		debug:   debug,
 	}
 }
 
@@ -46,12 +54,20 @@ func (s *HttpServer) SetTLS(cert, key string) {
 	s.tlsKey = key
 }
 
-// corsHeader adds permissive CORS headers so browsers can fetch from any origin
-// (e.g., the Koha HTTPS page fetching from localhost).
-func corsHeader(w http.ResponseWriter) {
-	w.Header().Set("Access-Control-Allow-Origin", "*")
+// corsHeader adds CORS headers only for the configured Koha origin.
+func (s *HttpServer) corsHeader(w http.ResponseWriter, r *http.Request) bool {
+	origin := strings.TrimRight(r.Header.Get("Origin"), "/")
+	if origin == "" {
+		return true
+	}
+	if s.allowedOrigin == "" || origin != s.allowedOrigin {
+		return false
+	}
+	w.Header().Set("Access-Control-Allow-Origin", origin)
 	w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-	w.Header().Set("Access-Control-Allow-Headers", "*")
+	w.Header().Set("Access-Control-Allow-Headers", "Content-Type, X-RFID-Client")
+	w.Header().Set("Vary", "Origin")
+	return true
 }
 
 func (s *HttpServer) Run() error {
@@ -80,7 +96,10 @@ func (s *HttpServer) Run() error {
 	var handler http.Handler = mux
 	handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
-		corsHeader(w)
+		if !s.corsHeader(w, r) {
+			http.Error(w, "origin not allowed", http.StatusForbidden)
+			return
+		}
 		if r.Method == "OPTIONS" {
 			w.WriteHeader(204)
 			if s.debug {
@@ -167,7 +186,14 @@ func (s *HttpServer) handleScan(w http.ResponseWriter, r *http.Request) {
 // Secure handlers
 
 func (s *HttpServer) handleSecure(w http.ResponseWriter, r *http.Request) {
-	r.ParseForm()
+	if !isWriteRequest(r) {
+		http.Error(w, "POST with X-RFID-Client header required", http.StatusMethodNotAllowed)
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "form parse error", http.StatusBadRequest)
+		return
+	}
 
 	var ops []rfidops.SecureOp
 	for key, vals := range r.Form {
@@ -194,6 +220,10 @@ func (s *HttpServer) handleSecure(w http.ResponseWriter, r *http.Request) {
 // Program handler
 
 func (s *HttpServer) handleProgram(w http.ResponseWriter, r *http.Request) {
+	if !isWriteRequest(r) {
+		http.Error(w, "POST with X-RFID-Client header required", http.StatusMethodNotAllowed)
+		return
+	}
 	if err := r.ParseForm(); err != nil {
 		http.Error(w, "form parse error", 400)
 		return
@@ -219,4 +249,6 @@ func (s *HttpServer) handleProgram(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, jsonBody)
 }
 
-
+func isWriteRequest(r *http.Request) bool {
+	return r.Method == http.MethodPost && r.Header.Get("X-RFID-Client") == "koha-rfid"
+}

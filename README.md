@@ -9,7 +9,8 @@ Cross-compiled from Linux to Windows. Zero Windows development environment neede
 ./build/linux/scan -port /dev/ttyUSB0
 
 # Production HTTP server (background)
-./build/linux/koha-rfid -port /dev/ttyUSB0 -listen localhost:9000 -debug &
+./build/linux/koha-rfid -port /dev/ttyUSB0 -listen localhost:9000 \
+  -allow-origin https://koha.example.org -debug &
 ```
 
 ```cmd
@@ -17,7 +18,7 @@ Cross-compiled from Linux to Windows. Zero Windows development environment neede
 scan.exe -port COM3
 
 :: Windows – production server
-koha-rfid.exe -port COM3 -listen localhost:9000
+koha-rfid.exe -port COM3 -listen localhost:9000 -allow-origin https://koha.example.org
 ```
 
 Then install the **Koha plugin** which injects [`koha-rfid.js`](plugin/Koha/Plugin/Rot13/RFID/koha-rfid.js) only on RFID-relevant pages (circulation, returns, renew, mainpage).
@@ -66,7 +67,7 @@ Three executables are built from the same Go codebase. Native Linux builds use t
 
 | Binary | Purpose |
 |---|---|
-| `koha-rfid` / `koha-rfid.exe` | HTTP/JSON server + background scan (production use) |
+| `koha-rfid` / `koha-rfid.exe` | HTTPS/JSON server (production use) |
 | `scan` / `scan.exe` | CLI scan tool with enter/leave detection |
 | `program` / `program.exe` | CLI tag programming tool |
 
@@ -77,6 +78,7 @@ Three executables are built from the same Go codebase. Native Linux builds use t
 | `-port` | `/dev/ttyUSB0` | Serial port for 3M RFID reader |
 | `-debug` | `false` | Enable protocol debug logging |
 | `-listen` | `localhost:9000` | HTTP server listen address |
+| `-allow-origin` | `""` | Koha origin allowed to make browser API calls, e.g. `https://koha.example.org` |
 | `-scan` | `false` | Scan once and exit (no HTTP server) |
 
 The `-scan` flag runs a one-shot inventory scan, prints tag SIDs, AFI, and RFID501 decoded content, then exits. Useful for quick diagnostics without starting the full HTTP server.
@@ -91,8 +93,8 @@ koha-rfid -port /dev/ttyUSB0 -scan
 |---|---|---|
 | `/` | GET | HTML status page |
 | `/scan/` | GET | Live inventory scan → tag list with AFI + RFID501 barcode |
-| `/secure?<TAG>=<AFI>` | GET | Set AFI byte (returns JSON with ok/error) |
-| `/program?<TAG>=<barcode>` | GET | RFID501 encode + write blocks + auto AFI |
+| `/secure` | POST | Set AFI byte (returns JSON with ok/error) |
+| `/program` | POST | RFID501 encode + write blocks + auto AFI |
 
 
 ### `/scan/`
@@ -101,12 +103,12 @@ Performs a **live** RFID inventory scan each request. Returns JSON with tag SIDs
 
 Sample response:
 ```json
-{"time":1743123456,"tags":[{"sid":"E2001234567890AB","content":"1301234567","security":"DA","tag_type":"RFID501","reader":"3M810"}]}
+{"tags":[{"sid":"E2001234567890AB","content":"1301234567","security":"DA","tag_type":"RFID501","reader":"3M810"}]}
 ```
 
 ### `/secure`
 
-Writes an AFI byte to a tag. Query format: `/secure?<16-char-SID>=<AFI-hex>`.
+Writes an AFI byte to a tag. Send a form-encoded `POST` with an `X-RFID-Client: koha-rfid` header, for example `E2001234567890AB=DA`. Browser callers must come from the configured `-allow-origin` value.
 
 **AFI constants:**
 - `DA` (0xDA, decimal 218) = **secure** – item checked in, security gate ignores tag
@@ -114,8 +116,7 @@ Writes an AFI byte to a tag. Query format: `/secure?<16-char-SID>=<AFI-hex>`.
 
 ### `/program`
 
-Programs RFID tags with RFID501-encoded barcode content. Query format:
-`/program?<16-char-SID>=<barcode>&<SID>=<barcode>`
+Programs RFID tags with RFID501-encoded barcode content. Send a form-encoded `POST` with an `X-RFID-Client: koha-rfid` header, for example `E2001234567890AB=1301234567`. RFID501 barcode content is limited to 16 bytes and longer input is rejected.
 
 ## CLI Tools
 
@@ -222,11 +223,9 @@ program.exe -port COM3 -afi 218 E2001234567890AB
 
 When `-type` is not set, the tool auto-detects: barcodes starting with `130` get `type=1 (Book)`, otherwise `type=0 (Other)`.
 
-## Background Scan & Tag Cache
+## Scanning
 
-The HTTP server runs a background goroutine that continuously inventories the reader (every 500ms) and populates an in-memory tag cache (`server.tagCache`). This cache is protected by a mutex (`server.mu`). Stale tags (not seen in the latest scan) are automatically removed.
-
-The `/scan/` endpoint performs a **live** inventory scan on each request — it does not read from the cache. The cache exists primarily to keep connection state warm and could be used by future endpoints.
+The `/scan/` endpoint performs a **live** inventory scan for every request. The reader is serialized with a mutex so a scan and a tag write cannot interleave on the serial connection. There is no background scan cache.
 
 ## Build
 

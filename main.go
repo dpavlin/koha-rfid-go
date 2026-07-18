@@ -77,6 +77,7 @@ func main() {
 	debug := flag.Bool("debug", false, "Enable debug logging")
 	mock := flag.Bool("mock", false, "Use mock RFID reader for browser testing (no real reader needed)")
 	listen := flag.String("listen", "localhost:9000", "HTTP server listen address")
+	allowedOrigin := flag.String("allow-origin", "", "Koha HTTPS origin allowed to call the browser API (required for browser access)")
 	onlyScan := flag.Bool("scan", false, "Scan once and exit (no HTTP server)")
 	// TLS is always enabled — self-signed cert generated at startup
 	flag.Parse()
@@ -120,6 +121,7 @@ func main() {
 
 	// Start HTTP server
 	server := NewHttpServer(*listen, ops, *debug)
+	server.SetAllowedOrigin(*allowedOrigin)
 
 	cert, key, err := genSelfSignedCert()
 	if err != nil {

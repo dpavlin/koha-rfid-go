@@ -51,10 +51,11 @@ func crc16(data []byte) uint16 {
 
 // RfidReader wraps serial port communication with 3M 810 reader
 type RfidReader struct {
-	port     serial.Port
-	debug    bool
-	portName string       // saved port name for re-connect on reset
-	mu       sync.Mutex   // guards serial port access against concurrent HTTP requests
+	port                serial.Port
+	debug               bool
+	portName            string     // saved port name for re-connect on reset
+	mu                  sync.Mutex // guards serial port access against concurrent HTTP requests
+	consecutiveFailures int        // guarded by mu
 }
 
 func NewRfidReader(comPort string, debug bool) (*RfidReader, error) {
@@ -179,6 +180,11 @@ func (r *RfidReader) readResponse() ([]byte, error) {
 func (r *RfidReader) Reset() error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	return r.resetLocked()
+}
+
+// resetLocked reopens the serial port. The caller must hold r.mu.
+func (r *RfidReader) resetLocked() error {
 
 	if r.debug {
 		log.Printf("resetting serial port %s", r.portName)
@@ -277,9 +283,6 @@ func (r *RfidReader) Inventory() ([]string, error) {
 	return tags, nil
 }
 
-// consecutiveFailures tracks serial errors for auto-reset detection.
-var consecutiveFailures int
-
 // InventoryWithReset performs Inventory with automatic serial port reset when
 // the reader stops responding (consecutive failures).  Callers should use this
 // instead of Inventory to recover from a stuck reader automatically.
@@ -287,24 +290,26 @@ func (r *RfidReader) InventoryWithReset() ([]string, error) {
 	// Try the normal scan first
 	tags, err := r.Inventory()
 	if err == nil {
-		consecutiveFailures = 0
+		r.consecutiveFailures = 0
 		return tags, nil
 	}
 
-	consecutiveFailures++
+	r.consecutiveFailures++
 	if r.debug {
-		log.Printf("inventory error (consecutive failures: %d): %v", consecutiveFailures, err)
+		log.Printf("inventory error (consecutive failures: %d): %v", r.consecutiveFailures, err)
 	}
 
 	// After 3 consecutive failures, reset the serial port
-	if consecutiveFailures >= 3 {
+	if r.consecutiveFailures >= 3 {
 		if r.debug {
-			log.Printf("resetting serial port after %d consecutive failures", consecutiveFailures)
+			log.Printf("resetting serial port after %d consecutive failures", r.consecutiveFailures)
 		}
-		if resetErr := r.Reset(); resetErr != nil {
+		// Scan already holds r.mu, so calling the public Reset method here
+		// would try to lock the same non-reentrant mutex and deadlock.
+		if resetErr := r.resetLocked(); resetErr != nil {
 			log.Printf("serial port reset failed: %v", resetErr)
 		} else {
-			consecutiveFailures = 0
+			r.consecutiveFailures = 0
 			// Try once more after reset
 			tags, err = r.Inventory()
 			if err == nil {
