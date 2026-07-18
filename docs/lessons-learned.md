@@ -268,3 +268,70 @@ Go only allows one `TestMain` per package. The browser test's `TestMain` was kep
 
 They are **not** standalone unit tests – they are full workflow automation scripts.
 
+---
+
+## 2026-07-18 — What Went Wrong (Circulation Page Test Fixes)
+
+### Mistake 1: Editing files on the server instead of local workspace
+**Wrong:** Using `ssh koha-dev.rot13.org "echo ... >> koha-rfid.js"` to make changes directly on the server.
+**Right:** Edit `koha-rfid.js` locally, then run `bash deploy.sh` to deploy. `deploy.sh` does syntax checking (`node --check`), linting (`eslint --quiet`), SCP to server, and Plack restart. Editing on server skips all validation and can break things.
+
+### Mistake 2: Trying to call `reset_rfid_state()` from every scenario
+**Wrong:** Calling `reset_rfid_state()` before each Phase 2 scenario (11, 12, 13, 15).
+**Right:** `reset_rfid_state()` should be called only **once** at the beginning of the test file (inside `suite_start()`). The AFI map in localStorage is the single source of truth — resetting it mid-scenario breaks the state machine and the dedup logic. The AFI map naturally handles repeated scans.
+
+### Mistake 3: Trying manual form submission instead of trusting automatic submission
+**Wrong:** Using `rodney input()`, `rodney click()`, or JavaScript `document.getElementById("patronsearch").submit()` to manually submit forms.
+**Right:** The RFID mock server + koha-rfid.js works via automatic polling:
+1. `load_tag` puts a tag on the mock server
+2. koha-rfid.js polls `/scan/` every ~2 seconds
+3. It detects the new tag, automatically fills the correct form field (`#findborrower` for patron, `#barcode` for book)
+4. It automatically submits the form
+5. The test script should ONLY: `load_tag → sleep → waitload → verify result`
+**Never** do manual form submission. The entire flow is automatic.
+
+### Mistake 4: AFI dedup skipping checkout on circulation.pl
+**Problem:** On circulation.pl checkout tab, when a book is DA and scanned as DA again, `rfid_scan()` skips submission because `entry.sec == sec`. This is correct for dedup BUT incorrect for checkout — a DA book on the checkout tab SHOULD be checked out (it was checked in, then the user wants to check it out again).
+**Fix:** Add `&& !checkout_active` to the dedup skip condition on line 490 of koha-rfid.js:
+```js
+// Step 2: skip if AFI hasn't changed since last submission
+// (checkout tab is an exception — DA book on checkout tab means re-checkout)
+if ( entry && entry.sec == sec && !returns && !renew && !checkin_active && !renew_active && !checkout_active ) {
+```
+
+### Mistake 5: Missing `now` declaration in patron card section
+**Problem:** Line 631 used `now = Date.now()` but `now` is only declared inside the `returns` block (line 425). While `now` is already declared at the function scope, using it in the patron card section (which runs before the returns block in some code paths) could cause issues if the variable wasn't properly hoisted.
+**Fix:** `now` is already declared at line 425 (`var now, shouldSubmit, pending;`), so this is fine. But always check that variables used across different blocks are declared at the function scope.
+
+### Mistake 6: Not restarting Plack after deploy
+**Wrong:** Deploying `koha-rfid.js` but not restarting Plack.
+**Right:** After `deploy.sh`, always verify the script is loaded. If the page shows no script or old behavior, restart: `sudo systemctl restart koha-plack`. Plack caches Perl modules, and the plugin reads the JS file via `read_file()` in the Perl module, so a restart may be needed.
+
+### Mistake 7: Cache-busting after deploy
+**Wrong:** Opening the page after deploy without cache-busting.
+**Right:** After deploying a new `koha-rfid.js`, always use cache-busting to load the new version:
+```bash
+uvx rodney newpage "https://ffzg.koha-dev.rot13.org:8443/cgi-bin/koha/circ/circulation.pl?cb=$(date +%s)"
+```
+Chrome caches the page HTML including the inlined script. Even a hard reload doesn't always clear it.
+
+### Mistake 8: `nav_page()` calling `tab_switch()` inside it
+**Problem:** `nav_page()` navigated to the page AND activated the tab. But scenarios that call `nav_page` then call `tab_switch` again, causing the tab to be clicked twice. The second click can trigger unintended behavior.
+**Fix:** `nav_page()` should only navigate to the page. `tab_switch()` should be called separately by the scenario flow. This gives scenarios full control over when tabs are activated.
+
+### Mistake 9: Patron card resubmission not allowed
+**Problem:** When a patron card is scanned, koha-rfid.js sets `sec: 'patron'` in the AFI map. On subsequent scans, the patron entry already exists so the form is never submitted. This breaks Phase 2 scenarios where the same patron needs to be scanned again.
+**Fix:** Add time-based dedup for patron cards (same as returns page):
+```js
+// Non-book barcode (patron card) — allow resubmission after dedup window
+var patronEntry = rfid_afi_get(t.content);
+now = Date.now();
+var canResubmit = !patronEntry || (patronEntry.sec == 'patron' && now - (patronEntry.submit || 0) > RFID_DEDUP_MS) || patronEntry.sec != 'patron';
+if ( canResubmit ) {
+    // submit form
+}
+```
+
+### Key Rule
+**Always edit local files, then deploy.** Never edit server files directly. The deploy pipeline exists for a reason: syntax validation, linting, SCP, and Plack restart.
+
