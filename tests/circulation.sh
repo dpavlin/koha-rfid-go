@@ -83,6 +83,8 @@ checkin_book() {
         fail "barcode $barcode still issued in DB"
     fi
     check_mock_tag_security "$barcode" "DA"
+    # Model removing book from reader after checkin completes
+    mock_clear
 }
 
 # ============================================================
@@ -115,23 +117,23 @@ check_page "circulation\.pl"
 load_tag "1301111111"
 rodney sleep 3
 rodney waitload
-check_page "circulation\.pl"
+check_page "returns\.pl"
 check_popup_contains "1301111111"
 
 scenario_start 4 "Book D7 renew"
 mock_clear
-check_page "circulation\.pl"
+check_page "returns\.pl"
 tab_switch "renew"
 check_page "circulation\.pl"
 load_tag "1302099999"
 rodney sleep 3
 rodney waitload
-check_page "circulation\.pl"
+check_page "renew\.pl"
 check_popup_contains "1302099999"
 
 scenario_start 5 "Empty tag"
 mock_clear
-check_page "circulation\.pl"
+check_page "renew\.pl"
 tab_switch "checkout"
 check_page "circulation\.pl"
 load_tag "empty"
@@ -186,11 +188,11 @@ check_page "circulation\.pl"
 
 echo "  -- Checkin 1301111111 --"
 checkin_book "1301111111"
-check_page "circulation\.pl"
+check_page "returns\.pl"
 
 scenario_start 12 "Patron + 2 books DA"
 mock_clear
-check_page "circulation\.pl"
+check_page "returns\.pl"
 tab_switch "checkout"
 check_page "circulation\.pl"
 
@@ -208,7 +210,7 @@ check_page "circulation\.pl"
 
 echo "  -- Checkin 1301111111 and 1302079605 --"
 checkin_book "1301111111"
-check_page "circulation\.pl"
+check_page "returns\.pl"
 checkin_book "1302079605"
 check_page "circulation\.pl"
 
@@ -234,15 +236,15 @@ check_page "circulation\.pl"
 
 echo "  -- Checkin 1301111111, 1302079605, 1302099999 --"
 checkin_book "1301111111"
-check_page "circulation\.pl"
+check_page "returns\.pl"
 checkin_book "1302079605"
-check_page "circulation\.pl"
+check_page "returns\.pl"
 checkin_book "1302099999"
-check_page "circulation\.pl"
+check_page "returns\.pl"
 
 scenario_start 15 "Batch checkout (Patron + 3 books simultaneously)"
 mock_clear
-check_page "circulation\.pl"
+check_page "returns\.pl"
 tab_switch "checkout"
 check_page "circulation\.pl"
 
@@ -269,8 +271,11 @@ done
 
 echo "  -- Checkin 1301111111, 1302079605, 1302099999 --"
 checkin_book "1301111111"
+check_page "returns\.pl"
 checkin_book "1302079605"
+check_page "returns\.pl"
 checkin_book "1302099999"
+check_page "returns\.pl"
 
 # ============================================================
 # PHASE 3: D7 book test (14)
@@ -278,7 +283,7 @@ checkin_book "1302099999"
 
 scenario_start 14 "Patron + 1 book D7"
 mock_clear
-check_page "circulation\.pl"
+check_page "returns\.pl"
 tab_switch "checkout"
 check_page "circulation\.pl"
 

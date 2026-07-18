@@ -98,9 +98,12 @@ function rfid_afi_sweep_stale(visibleBarcodes) {
 	var changed = false;
 	var limit = 3000; // 3 seconds
 	for (var key in map) {
-		// Skip entries for tags still on the reader
 		if (visibleBarcodes && visibleBarcodes.indexOf(key) >= 0) continue;
 		var e = map[key];
+		// Don't delete entries that were recently submitted — the tag may still
+		// be on the reader during the dedup window (e.g., checkin form navigating
+		// to returns.pl). Deleting it would cause a re-submit on next scan.
+		if (e.submit && (now - e.submit) < RFID_DEDUP_MS) continue;
 		var age = now - (e.last_seen || e.time || 0);
 		if (age > limit) {
 			delete map[key];

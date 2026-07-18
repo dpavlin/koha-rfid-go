@@ -389,13 +389,14 @@ check_page() {
     title=$(rodney title 2>/dev/null || echo "unknown")
     local short_url="${url#*$KOHA_URL}"
     short_url="${short_url#?}" # remove leading /
-    echo "  PAGE: $title ($short_url)"
     if [ -n "$expected_pattern" ] && [ "$url" != "unknown" ]; then
         if echo "$url" | grep -q "$expected_pattern"; then
-            : # ok
+            pass "PAGE: $title ($short_url)"
         else
-            echo "  [MISMATCH] expected pattern '$expected_pattern' but on '$url'"
+            fail "PAGE MISMATCH: expected '$expected_pattern' but on '$short_url'"
         fi
+    else
+        echo "  PAGE: $title ($short_url)"
     fi
 }
 
