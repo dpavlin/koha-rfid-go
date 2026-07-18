@@ -335,3 +335,35 @@ if ( canResubmit ) {
 ### Key Rule
 **Always edit local files, then deploy.** Never edit server files directly. The deploy pipeline exists for a reason: syntax validation, linting, SCP, and Plack restart.
 
+---
+
+## 2026-07-18 — Circulation Page Page-Tracking & Sweep Fix Session
+
+### Session Goal
+Add page URL tracking to circulation tests, fix patron card resubmission loop, fix non-deterministic page mismatches.
+
+### Mistake 10: `rfid_afi_sweep_stale` deletes recently submitted entries
+**Problem:** After a checkin submit, the AFI entry has `submit` timestamp set. The next 9 polls skip due to dedup, but each skips by `return`ing early — sweep never runs. After 10s dedup expires, sweep finally runs and deletes the entry (last_seen is 10s+ old). Next poll finds no entry → **re-submits**.
+**Fix:** Don't delete entries within `RFID_DEDUP_MS` of their `submit` timestamp:
+```js
+if (e.submit && (now - e.submit) < RFID_DEDUP_MS) continue;
+```
+
+### Mistake 11: `check_page()` was a no-op on mismatch
+**Problem:** Page tracking logged `[MISMATCH]` warnings but didn't count as test failures. Tests passed even when on wrong pages.
+**Fix:** Make `check_page()` call `pass()`/`fail()` like normal tests.
+
+### Mistake 12: Test expectations assumed circulation.pl after checkin
+**Problem:** Test expected to be on `circulation.pl` after `checkin_book()`, but Koha's checkin form submits to `returns.pl`. This is correct Koha behavior — not a bug in the test or implementation.
+**Fix:** Updated `check_page` expectations to match actual page flow:
+- After checkin → expect `returns.pl`
+- After renew → expect `renew.pl`
+- After checkout → stays on `circulation.pl`
+
+### Mistake 13: Mock stale tags cause non-deterministic behavior
+**Problem:** `checkin_book()` left the tag on the mock reader. During `check_mock_tag_security` (up to 6s wait), RFID polling kept seeing the tag, sometimes re-submitting and navigating away. This caused flaky page expectations.
+**Fix:** Added `mock_clear` at end of `checkin_book()` to model removing book from reader after checkin completes.
+
+### Key Insight: Sweep + dedup interaction
+The sweep function and dedup mechanism must coordinate. Deleting an entry that was recently submitted breaks the dedup guarantee. The `submit` timestamp is the signal that "this entry is actively being processed" — sweep should respect it.
+
