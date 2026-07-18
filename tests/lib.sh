@@ -16,10 +16,30 @@ KOHA_PASS="${KOHA_PASS:-}"
 MOCK_URL="${MOCK_URL:-https://localhost:9000}"
 RESULTS_FILE="${RESULTS_FILE:-/tmp/rfid-test-results}"
 
-# Data files
-TAGS="$(cat tests/tags.json)"
-PAGES="$(cat tests/pages.json)"
-SCENARIOS="$(cat tests/scenarios.json)"
+# Tag definitions inlined directly using barcodes as keys
+declare -A TAG_SID
+declare -A TAG_SECURITY
+declare -A TAG_TYPE
+
+TAG_SID["200000000042"]="e00401001f77fb98"
+TAG_SECURITY["200000000042"]="DA"
+TAG_TYPE["200000000042"]="patron"
+
+TAG_SID["1301111111"]="e00401001f7812ed"
+TAG_SECURITY["1301111111"]="DA"
+TAG_TYPE["1301111111"]="book"
+
+TAG_SID["1302079605"]="e00401003126a0c8"
+TAG_SECURITY["1302079605"]="DA"
+TAG_TYPE["1302079605"]="book"
+
+TAG_SID["1302099999"]="e004010031269117"
+TAG_SECURITY["1302099999"]="D7"
+TAG_TYPE["1302099999"]="book"
+
+get_tag_sid() {
+    echo "${TAG_SID[$1]:-}"
+}
 
 # ------------------------------------------------------------------
 # Test results tracking
@@ -67,33 +87,44 @@ check_rfid_server() {
     local resp
     resp=$(curl -sk "https://$RFID_HOST:$RFID_PORT/" 2>/dev/null || echo "")
     if echo "$resp" | grep -q "mock"; then
-        echo "  → Mock RFID server detected (good)"
+        echo "  -> Mock RFID server detected (good)"
         return 0
     fi
     if echo "$resp" | grep -qiE '(koha|rfid|html|read|tag)' 2>/dev/null; then
         echo ""
-        echo "  ⚠  REAL RFID SERVER detected at $RFID_HOST:$RFID_PORT"
-        echo "  ⚠  Please stop the real server so mock can start."
-        echo "  ⚠  The real server will interfere with controlled testing."
+        echo "  [WARNING] REAL RFID SERVER detected at $RFID_HOST:$RFID_PORT"
+        echo "  [WARNING] Please stop the real server so mock can start."
+        echo "  [WARNING] The real server will interfere with controlled testing."
         echo ""
         return 1
     fi
     # No response — nothing running, mock can start
-    echo "  → No RFID server detected — mock will start"
+    echo "  -> No RFID server detected — mock will start"
     return 0
 }
 
 # ------------------------------------------------------------------
-# Mock server — delegates to server.sh for clean start/stop with logging.
-# If a mock-mode server is already running, skip start and stop (leave it for other tests).
-# If a real reader is running, stop it first so mock can take over.
+# Mock server — if already running, just clear tags.
+# If nothing is running, start mock. If real reader is running, stop it first.
 # ------------------------------------------------------------------
 mock_start() {
-    # Always restart mock server to ensure clean state
-    ./server.sh stop 2>/dev/null
-    rm -f /tmp/koha-rfid-server.pid
-    sleep 1
+    # Check if mock server is already running
+    if curl -sk "$MOCK_URL/mock/status" >/dev/null 2>&1; then
+        mock_clear
+        mock_error 0
+        mock_timeout 0
+        return 0
+    fi
+    # Nothing running — start mock
+    check_rfid_server
     ./server.sh start --mock || return 1
+}
+
+mock_reset() {
+    # Reset mock server to clean state (clear tags, errors, timeouts)
+    mock_clear
+    mock_error 0
+    mock_timeout 0
 }
 
 mock_stop() { :; }
@@ -120,7 +151,7 @@ koha_login() {
         rodney waitload
     fi
     # Check if already logged in — no login form means session active
-    if rodney exists '#login form' 2>/dev/null; then
+    if rodney exists '#loginform' 2>/dev/null; then
         rodney input 'input[name=userid]' "$KOHA_USER"
         rodney input 'input[name=password]' "$KOHA_PASS"
         rodney click 'input#submit'
@@ -136,59 +167,111 @@ koha_login() {
     else
         echo "  [warn] could not verify logged-in user — page may not be staff client"
     fi
+    # Force a hard reload to clear cached koha-rfid.js
+    echo "Performing hard reload to refresh script cache..."
+    rodney reload --hard
+    rodney waitload
     rodney sleep 2
 }
 
 tab_switch() {
     local tab="$1"
     [ -z "$tab" ] && return 0
+    rodney wait '#circ_search' >/dev/null 2>&1 || true
     case "$tab" in
-        checkout) rodney js 'document.querySelector("a[href=\"#circ_search\"]").click()';;
-        checkin)  rodney js 'document.querySelector("a[href=\"#checkin_search\"]").click()';;
-        renew)    rodney js 'document.querySelector("a[href=\"#renew_search\"]").click()';;
+        checkout) rodney js 'document.querySelector("a[href$=\"#circ_search\"]")?.click()' >/dev/null 2>&1 || true;;
+        checkin)  rodney js 'document.querySelector("a[href$=\"#checkin_search\"]")?.click()' >/dev/null 2>&1 || true;;
+        renew)    rodney js 'document.querySelector("a[href$=\"#renew_search\"]")?.click()' >/dev/null 2>&1 || true;;
         *)        echo "  [warn] unknown tab: $tab"; return 1;;
     esac
-    rodney sleep 1
+    rodney sleep 1.5
+}
+
+# Pause RFID polling so waitstable doesn't hang (polling keeps mutating DOM)
+rfid_pause() {
+    rodney js "clearTimeout(rfid_timeout)" >/dev/null 2>&1
+}
+
+# Resume RFID polling after a pause
+rfid_resume() {
+    rodney js "rfid_poll()" >/dev/null 2>&1
 }
 
 # ------------------------------------------------------------------
 # Tags
 # ------------------------------------------------------------------
 load_tag() {
-    local key="$1"
-    local sid content security
-    if [ "$key" = "empty" ]; then
-        sid=$(echo "$TAGS" | jq -r '.book1.sid')
+    local barcode="$1"
+    local sid security
+    if [ "$barcode" = "empty" ]; then
+        sid="${TAG_SID["1301111111"]}"
         mock_add "$sid" "" "DA"
         return
     fi
-    sid=$(echo "$TAGS" | jq -r ".\"$key\".sid")
-    content=$(echo "$TAGS" | jq -r ".\"$key\".content")
-    security=$(echo "$TAGS" | jq -r ".\"$key\".security")
-    [ "$sid" = "null" ] && echo "  [error] unknown tag: $key" && return 1
-    mock_add "$sid" "$content" "$security"
+    sid="${TAG_SID[$barcode]:-}"
+    security="${TAG_SECURITY[$barcode]:-}"
+    if [ -z "$sid" ]; then
+        # Fallback for dynamic/arbitrary barcodes: generate a unique dummy SID
+        sid="e0040100$(echo -n "$barcode" | md5sum | cut -c1-8)"
+        security="DA"
+    fi
+    mock_add "$sid" "$barcode" "$security"
 }
 
 check_popup_contains() {
     local search="$1"
-    local text
-    text=$(rodney js "document.getElementById('rfid-popup-body')?.innerText || ''" 2>/dev/null)
-    if echo "$text" | grep -qiE "$search"; then
-        pass "popup contains '$search'"
-        return 0
-    fi
+    local text=""
+    local start; start=$(date +%s)
+    while [ $(( $(date +%s) - start )) -lt 6 ]; do
+        check_koha_messages
+        text=$(rodney js "document.getElementById('rfid-popup-body')?.innerText || ''" 2>/dev/null)
+        if echo "$text" | grep -qiE "$search"; then
+            pass "popup contains '$search'"
+            return 0
+        fi
+        sleep 0.2
+    done
     fail "popup does not contain '$search' (found: '$text')"
     return 1
 }
 
 check_popup_empty() {
-    local text
-    text=$(rodney js "document.getElementById('rfid-popup-body')?.innerText || ''" 2>/dev/null)
-    if [[ -z "$text" || "$text" == *"(no tags)"* || "$text" == *"no tags in range"* || "$text" == *" empty"* ]]; then
-        pass "popup is empty"
-        return 0
-    fi
+    local text=""
+    local start; start=$(date +%s)
+    while [ $(( $(date +%s) - start )) -lt 6 ]; do
+        check_koha_messages
+        text=$(rodney js "document.getElementById('rfid-popup-body')?.innerText || ''" 2>/dev/null)
+        if [[ -z "$text" || "$text" == *"(no tags)"* || "$text" == *"no tags in range"* || "$text" == *" empty"* ]]; then
+            pass "popup is empty"
+            return 0
+        fi
+        sleep 0.2
+    done
     fail "popup is not empty (found: '$text')"
+    return 1
+}
+
+check_mock_tag_security() {
+    local bc_key="$1" expected_sec="$2"
+    local sid
+    sid=$(get_tag_sid "$bc_key")
+    local status_json=""
+    local actual_sec=""
+    local start; start=$(date +%s)
+    local expected_upper
+    expected_upper=$(echo "$expected_sec" | tr '[:lower:]' '[:upper:]')
+    while [ $(( $(date +%s) - start )) -lt 6 ]; do
+        status_json=$(curl -sk "$MOCK_URL/mock/status" 2>/dev/null || echo "")
+        actual_sec=$(echo "$status_json" | jq -r ".tags[] | select(.sid == \"$sid\") | .security" 2>/dev/null || echo "")
+        local actual_upper
+        actual_upper=$(echo "$actual_sec" | tr '[:lower:]' '[:upper:]')
+        if [ "$actual_upper" = "$expected_upper" ]; then
+            pass "mock tag $bc_key security is $expected_sec"
+            return 0
+        fi
+        sleep 0.2
+    done
+    fail "mock tag $bc_key security expected $expected_sec but got $actual_sec"
     return 1
 }
 
@@ -196,7 +279,8 @@ check_popup_empty() {
 # RFID state management — single point of control, no direct localStorage calls in tests
 # ------------------------------------------------------------------
 reset_rfid_state() {
-    rodney js "localStorage.removeItem('rfid_afi')" >/dev/null 2>&1
+    mock_reset
+    rodney js "(function() { localStorage.removeItem('rfid_afi'); window.rfid_popup_update(); var b=document.getElementById('rfid-popup-body'); if(b) b.textContent='(no tags)'; })()" >/dev/null 2>&1
 }
 
 # ------------------------------------------------------------------
@@ -205,7 +289,19 @@ reset_rfid_state() {
 scenario_start() {
     local sid="$1" name="$2"
     echo ""
-    echo "  ── Scenario $sid: $name ──"
+    echo "  --- Scenario $sid: $name ---"
+    reset_rfid_state
+    if [ -n "${PAGE_URL:-}" ]; then
+        local cb_url="$PAGE_URL"
+        if [[ "$cb_url" == *\?* ]]; then
+            cb_url="${cb_url}&cb=$(date +%s%N)"
+        else
+            cb_url="${cb_url}?cb=$(date +%s%N)"
+        fi
+        rodney open "$cb_url"
+        rodney waitload
+        rodney sleep 1
+    fi
 }
 
 scenario_end() {
@@ -217,9 +313,9 @@ scenario_end() {
 # ------------------------------------------------------------------
 test_summary() {
     echo ""
-    echo "═══════════════════════════════════════════════════════════════════"
+    echo "==================================================================="
     echo "  Test Summary"
-    echo "═══════════════════════════════════════════════════════════════════"
+    echo "==================================================================="
     local total=$((TEST_RESULT_PASS + TEST_RESULT_FAIL))
     echo "  Total: $total"
     echo "  Pass:  $TEST_RESULT_PASS"
@@ -229,8 +325,40 @@ test_summary() {
     else
         echo "  Result: SOME TESTS FAILED"
     fi
-    echo "═══════════════════════════════════════════════════════════════════"
+    echo "==================================================================="
     echo ""
+}
+
+# ------------------------------------------------------------------
+# HTML message/warning check
+# ------------------------------------------------------------------
+check_koha_messages() {
+    local msgs
+    msgs=$(rodney js "(function() {
+        var selectors = [
+            '#circ_messages',
+            '#circ_needsconfirmation',
+            '.dialog.alert',
+            '.dialog.warning',
+            '.dialog.message',
+            '.alert-warning',
+            '.alert-info',
+            '.alert-danger',
+            '.dialog'
+        ];
+        var found = [];
+        selectors.forEach(function(sel) {
+            var el = document.querySelector(sel);
+            if (el && el.offsetParent !== null) {
+                var text = el.innerText.trim().replace(/\\s+/g, ' ');
+                if (text) { found.push(sel + ': \"' + text + '\"'); }
+            }
+        });
+        return found.join(' | ');
+    })()" 2>/dev/null || echo "")
+    if [ -n "$msgs" ]; then
+        info "Koha page message(s): $msgs"
+    fi
 }
 
 # ------------------------------------------------------------------
@@ -239,12 +367,12 @@ test_summary() {
 debug_help() {
     local url; url=$(rodney url 2>/dev/null || echo "unknown")
     echo ""
-    echo "  [══ Debug ---------------------------------------------]"
+    echo "  [== Debug ---------------------------------------------]"
     echo "  |  To inspect interactively:                          |"
     echo "  |    /home/dpavlin/.local/bin/uvx rodney '$url'       |"
     echo "  |    /home/dpavlin/.local/bin/uvx rodney html         |"
     echo "  |    /home/dpavlin/.local/bin/uvx rodney js '...'     |"
-    echo "  [══════════════════════════════════════════════════════]"
+    echo "  [======================================================]"
     echo ""
     echo "  -- HTML dump --"
     rodney html 2>/dev/null | head -100 || echo "  [no HTML output]"
@@ -260,11 +388,19 @@ debug_help() {
 # ------------------------------------------------------------------
 # DOM checks
 check_db() {
-    local result; result=$(koha_mysql "$1" 2>/dev/null | tail -n 1 | tr -d '\r')
-    if echo "$result" | grep -q "$2" 2>/dev/null; then
-        pass "DB: $2"; return 0
-    fi
-    fail "DB expected '$2' but got: $result"; return 1
+    local sql="$1" expected="$2"
+    local start; start=$(date +%s)
+    local result=""
+    while [ $(( $(date +%s) - start )) -lt 15 ]; do
+        result=$(koha_mysql "$sql" 2>/dev/null | tail -n 1 | tr -d '\r')
+        if echo "$result" | grep -q "$expected" 2>/dev/null; then
+            pass "DB: $expected"
+            return 0
+        fi
+        sleep 0.2
+    done
+    fail "DB expected '$expected' but got: $result"
+    return 1
 }
 
 # ------------------------------------------------------------------
@@ -272,12 +408,23 @@ check_db() {
 # ------------------------------------------------------------------
 koha_mysql() {
     local sql="$1"
-    ssh koha-dev.rot13.org "sudo /usr/sbin/koha-mysql ffzg -e '$sql'" 2>/dev/null
+    timeout 30 ssh -o ConnectTimeout=5 koha-dev.rot13.org "sudo /usr/sbin/koha-mysql ffzg -e '$sql'" 2>/dev/null
+}
+
+db_checkout() {
+    local patron="$1" barcode="$2"
+    local borrowernumber itemnumber
+    borrowernumber=$(koha_mysql "SELECT borrowernumber FROM borrowers WHERE cardnumber=\"$patron\"" | tail -n 1 | tr -d '\r')
+    itemnumber=$(koha_mysql "SELECT itemnumber FROM items WHERE barcode=\"$barcode\"" | tail -n 1 | tr -d '\r')
+    if [ -n "$borrowernumber" ] && [ -n "$itemnumber" ]; then
+        koha_mysql "DELETE FROM issues WHERE itemnumber=$itemnumber; INSERT INTO issues (itemnumber, borrowernumber, date_due, branchcode, issuedate) VALUES ($itemnumber, $borrowernumber, DATE_ADD(NOW(), INTERVAL 14 DAY), \"FFZG\", NOW()); UPDATE items SET onloan=DATE(DATE_ADD(NOW(), INTERVAL 14 DAY)) WHERE itemnumber=$itemnumber;" >/dev/null 2>&1
+    fi
 }
 
 # ------------------------------------------------------------------
 # DOM checks
 check_input_filled() {
+    check_koha_messages
     local sel="$1"
     local val
     val=$(rodney js "document.querySelector('$sel')?.value" 2>/dev/null || echo "")

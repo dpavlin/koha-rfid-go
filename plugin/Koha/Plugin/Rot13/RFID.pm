@@ -40,9 +40,11 @@ sub new {
 sub intranet_js {
     my ( $self, $args ) = @_;
 
-    # Check the current request URI to determine if we should inject RFID JS
-    # Uses ENV because $self->{'cgi'} is not set when called via template plugin
+    # Restore robust %ENV request URI resolution
     my $uri = $ENV{SCRIPT_NAME} || $ENV{REQUEST_URI} || '';
+
+    # Debug logging
+    warn "RFID Plugin Hook: uri='$uri' SCRIPT_NAME='" . ($ENV{SCRIPT_NAME}||'') . "' REQUEST_URI='" . ($ENV{REQUEST_URI}||'') . "'\n";
 
     # Pages that need RFID support
     # SYNC: keep in sync with page detection in koha-rfid.js (rfid_scan)

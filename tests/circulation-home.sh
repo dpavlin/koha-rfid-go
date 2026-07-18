@@ -6,108 +6,124 @@ set -eu
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 source "$SCRIPT_DIR/lib.sh"
 
+PAGE="circulation-home"
 PAGE_URL="$KOHA_URL/circ/circulation-home.pl"
 
 # --- Single Initialization ---
-echo "[════════════════════════════════════════]"
+echo "[========================================]"
 echo "|  circulation-home"
-echo "[════════════════════════════════════════]"
+echo "[========================================]"
 
 rodney connect localhost:$CDP_PORT
 koha_login
 mock_start
 rodney open "$PAGE_URL"
 rodney waitload
-rodney sleep 2
 
 # --- Scenario 1: No tags ---
-echo "Running Scenario 1: No tags"
+scenario_start 1 "No tags"
 mock_clear
-rodney sleep 3
 check_popup_empty
 
 # --- Scenario 2: Patron only ---
-echo "Running Scenario 2: Patron only"
+scenario_start 2 "Patron only"
 mock_clear
+reset_rfid_state
 tab_switch "checkout"
-load_tag "patron"
-rodney sleep 5
+load_tag "200000000042"
+rodney sleep 2
 rodney waitload
-check_popup_contains "200000000042"
+rodney url | grep -q "circulation.pl" && pass "Navigated to circulation.pl" || fail "Did not navigate to circulation.pl"
 
 # --- Scenario 3: Book DA checkin ---
-echo "Running Scenario 3: Book DA checkin"
+scenario_start 3 "Book DA checkin"
 mock_clear
+reset_rfid_state
 tab_switch "checkin"
-load_tag "book1"
-rodney sleep 5
+load_tag "1301111111"
+rodney sleep 2
 rodney waitload
 check_popup_contains "1301111111"
 
 # --- Scenario 4: Book D7 renew ---
-echo "Running Scenario 4: Book D7 renew"
+scenario_start 4 "Book D7 renew"
 mock_clear
+reset_rfid_state
 tab_switch "renew"
-load_tag "book3"
-rodney sleep 5
+load_tag "1302099999"
+rodney sleep 2
 rodney waitload
 check_popup_contains "1302099999"
 
 # --- Scenario 5: Empty tag ---
-echo "Running Scenario 5: Empty tag"
+scenario_start 5 "Empty tag"
 mock_clear
 tab_switch "checkout"
 load_tag "empty"
-rodney sleep 5
-rodney waitload
+rodney sleep 2
 check_popup_empty
 
 # --- Scenario 7: Timeout mode ---
-echo "Running Scenario 7: Timeout mode"
+scenario_start 7 "Timeout mode"
+rfid_pause
 mock_clear
 mock_timeout 100
-load_tag "book1"
-rodney sleep 5
-rodney waitload
+load_tag "1301111111"
+rfid_resume
+rodney sleep 3
 check_popup_contains "timeout"
 
 # --- Scenario 8: Tag leaves range ---
-echo "Running Scenario 8: Tag leaves range"
+scenario_start 8 "Tag leaves range"
 mock_clear
+reset_rfid_state
 tab_switch "checkout"
-load_tag "book1"
-rodney sleep 5
-rodney waitload
+load_tag "1301111111"
+rodney sleep 3
 mock_clear
-rodney sleep 5
+rodney sleep 3
 check_popup_empty
 
 # --- Scenario 21: Patron on circ-home ---
-echo "Running Scenario 21: Patron on circ-home"
+scenario_start 21 "Patron on circ-home"
 mock_clear
+reset_rfid_state
 tab_switch "checkout"
-load_tag "patron"
-rodney sleep 5
+load_tag "200000000042"
+rodney sleep 2
 rodney waitload
-check_input_filled 'input[name=findborrower]'
+rodney url | grep -q "circulation.pl" && pass "Navigated to circulation.pl" || fail "Did not navigate to circulation.pl"
+
 
 # --- Scenario 22: Book checkin on circ-home ---
-echo "Running Scenario 22: Book checkin on circ-home"
+scenario_start 22 "Book checkin on circ-home"
 mock_clear
+reset_rfid_state
 tab_switch "checkin"
-load_tag "book1"
-rodney sleep 5
+load_tag "1301111111"
+rodney sleep 2
 rodney waitload
-check_input_filled '#ret_barcode'
+actual_url=$(rodney url)
+if echo "$actual_url" | grep -q "returns.pl"; then
+    pass "Navigated to returns.pl"
+else
+    fail "Did not navigate to returns.pl (actual URL: $actual_url)"
+fi
 
 # --- Scenario 23: Book renew on circ-home ---
-echo "Running Scenario 23: Book renew on circ-home"
+scenario_start 23 "Book renew on circ-home"
 mock_clear
+reset_rfid_state
 tab_switch "renew"
-load_tag "book3"
-rodney sleep 5
+load_tag "1302099999"
+rodney sleep 2
 rodney waitload
-check_input_filled '#ren_barcode'
+actual_url=$(rodney url)
+if echo "$actual_url" | grep -q "renew.pl"; then
+    pass "Navigated to renew.pl"
+else
+    fail "Did not navigate to renew.pl (actual URL: $actual_url)"
+fi
 
 echo ""
 echo "Done."

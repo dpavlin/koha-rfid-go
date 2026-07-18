@@ -9,10 +9,10 @@ source "$SCRIPT_DIR/lib.sh"
 PAGE="circulation"
 PAGE_URL="$KOHA_URL/circ/circulation.pl"
 
-# --- Single Initialization (browser state changes happen here only) ---
-echo "[════════════════════════════════════════]"
+# --- Single Initialization ---
+echo "[========================================]"
 echo "|  circulation"
-echo "[════════════════════════════════════════]"
+echo "[========================================]"
 
 rodney connect localhost:$CDP_PORT
 koha_login
@@ -28,8 +28,8 @@ echo "-- Default form check --"
 if rodney exists 'input[name=findborrower]' 2>/dev/null; then
     pass "default checkout form (findborrower) is present"
     mock_clear
-    load_tag "patron"
-    sleep 3
+    load_tag "200000000042"
+    rodney sleep 3
     if rodney visible '.patroninfo' 2>/dev/null; then
         pass "default form works — patron scan finds patron"
     else
@@ -47,32 +47,38 @@ patron_loaded() {
 
 # --- Helper: checkout a book (load tag, wait, verify) ---
 checkout_book() {
-    local bc="$1" label="$2"
+    local barcode="$1"
     mock_clear
-    load_tag "$bc"
-    rodney sleep 10
-    count=$(koha_mysql "SELECT COUNT(*) FROM issues JOIN items USING (itemnumber) WHERE items.barcode='$bc'")
+    load_tag "$barcode"
+    rodney sleep 2
+    rodney waitload
+    check_koha_messages
+    count=$(koha_mysql "SELECT COUNT(*) FROM issues JOIN items USING (itemnumber) WHERE items.barcode='$barcode'")
     if echo "$count" | grep -qE '[1-3]'; then
-        pass "$label is checked out"
+        pass "barcode $barcode is checked out"
     else
-        fail "$label is NOT checked out in DB"
+        fail "barcode $barcode is NOT checked out in DB"
     fi
+    check_mock_tag_security "$barcode" "D7"
 }
 
 # --- Helper: checkin a book (switch to checkin tab, load tag, verify clean) ---
 checkin_book() {
-    local bc="$1" label="$2"
+    local barcode="$1"
     tab_switch "checkin"
     mock_clear
-    load_tag "$bc"
-    rodney sleep 10
+    load_tag "$barcode"
+    rodney sleep 2
+    rodney waitload
+    check_koha_messages
     # Verify the book is no longer issued
-    count=$(koha_mysql "SELECT COUNT(*) FROM issues JOIN items USING (itemnumber) WHERE items.barcode='$bc'")
+    count=$(koha_mysql "SELECT COUNT(*) FROM issues JOIN items USING (itemnumber) WHERE items.barcode='$barcode'")
     if echo "$count" | grep -q "0"; then
-        pass "$label checked in — not issued"
+        pass "barcode $barcode checked in — not issued"
     else
-        fail "$label still issued in DB"
+        fail "barcode $barcode still issued in DB"
     fi
+    check_mock_tag_security "$barcode" "DA"
 }
 
 # ============================================================
@@ -83,31 +89,33 @@ scenario_start 1 "No tags"
 mock_clear
 reset_rfid_state
 tab_switch "checkout"
-rodney sleep 3
 check_popup_empty
 
 scenario_start 2 "Patron only"
 mock_clear
 reset_rfid_state
 tab_switch "checkout"
-load_tag "patron"
-rodney sleep 10
+load_tag "200000000042"
+rodney sleep 3
+rodney waitload
 check_popup_contains "200000000042"
 
 scenario_start 3 "Book DA checkin"
 mock_clear
 reset_rfid_state
 tab_switch "checkin"
-load_tag "book1"
-rodney sleep 10
+load_tag "1301111111"
+rodney sleep 3
+rodney waitload
 check_popup_contains "1301111111"
 
 scenario_start 4 "Book D7 renew"
 mock_clear
 reset_rfid_state
 tab_switch "renew"
-load_tag "book3"
-rodney sleep 10
+load_tag "1302099999"
+rodney sleep 3
+rodney waitload
 check_popup_contains "1302099999"
 
 scenario_start 5 "Empty tag"
@@ -115,151 +123,139 @@ mock_clear
 reset_rfid_state
 tab_switch "checkout"
 load_tag "empty"
-rodney sleep 10
+rodney sleep 3
 check_popup_empty
 
 scenario_start 7 "Timeout mode"
+rfid_pause
 mock_clear
 reset_rfid_state
 mock_timeout 100
-load_tag "book1"
-rodney sleep 10
+load_tag "1301111111"
+rfid_resume
+rodney sleep 3
 check_popup_contains "timeout"
 
 scenario_start 8 "Tag leaves range"
 mock_clear
 reset_rfid_state
 tab_switch "checkout"
-load_tag "book1"
-rodney sleep 10
+load_tag "1301111111"
+rodney sleep 3
 mock_clear
-rodney sleep 10
+rodney sleep 3
 check_popup_empty
 
 # ============================================================
-# PHASE 2: Sequential checkout scenarios (11-13)
+# PHASE 2: Sequential checkout scenarios (11-13, 15)
 # Each followed by checkin to restore clean state
 # ============================================================
 
 scenario_start 11 "Patron + 1 book DA"
-rodney open "$PAGE_URL"
-rodney waitload
-rodney sleep 2
 reset_rfid_state
 tab_switch "checkout"
 
 mock_clear
-load_tag "patron"
-rodney sleep 15
-
-# Check if koha-rfid.js populated patron info in DOM
-if patron_loaded; then
-    info "patron info loaded in DOM by rfid_scan"
-else
-    info "patron info not in DOM, submitting search manually..."
-    rodney js "window.location.href = window.location.pathname + '?findborrower=200000000042&Submit=Submit'"
-    rodney waitload
-    rodney sleep 5
-fi
+load_tag "200000000042"
+rodney sleep 3
+rodney waitload
 
 tab_switch "checkout"
-rodney sleep 2
-checkout_book "book1" "book1"
+checkout_book "1301111111"
 
-echo "  -- Checkin book1 --"
-checkin_book "book1" "book1"
+echo "  -- Checkin 1301111111 --"
+checkin_book "1301111111"
 
 scenario_start 12 "Patron + 2 books DA"
-rodney open "$PAGE_URL"
-rodney waitload
-rodney sleep 2
 reset_rfid_state
 tab_switch "checkout"
 
 mock_clear
-load_tag "patron"
-rodney sleep 15
-
-if patron_loaded; then
-    info "patron info loaded in DOM by rfid_scan"
-else
-    info "patron info not in DOM, submitting search manually..."
-    rodney js "window.location.href = window.location.pathname + '?findborrower=200000000042&Submit=Submit'"
-    rodney waitload
-    rodney sleep 5
-fi
+load_tag "200000000042"
+rodney sleep 3
+rodney waitload
 
 tab_switch "checkout"
-rodney sleep 2
-checkout_book "book1" "book1"
-checkout_book "book2" "book2"
+checkout_book "1301111111"
+checkout_book "1302079605"
 
-echo "  -- Checkin book1 and book2 --"
-checkin_book "book1" "book1"
-checkin_book "book2" "book2"
+echo "  -- Checkin 1301111111 and 1302079605 --"
+checkin_book "1301111111"
+checkin_book "1302079605"
 
 scenario_start 13 "Patron + 3 books DA"
-rodney open "$PAGE_URL"
-rodney waitload
-rodney sleep 2
 reset_rfid_state
 tab_switch "checkout"
 
 mock_clear
-load_tag "patron"
-rodney sleep 15
-
-if patron_loaded; then
-    info "patron info loaded in DOM by rfid_scan"
-else
-    info "patron info not in DOM, submitting search manually..."
-    rodney js "window.location.href = window.location.pathname + '?findborrower=200000000042&Submit=Submit'"
-    rodney waitload
-    rodney sleep 5
-fi
+load_tag "200000000042"
+rodney sleep 3
+rodney waitload
 
 tab_switch "checkout"
-rodney sleep 2
-checkout_book "book1" "book1"
-checkout_book "book2" "book2"
-checkout_book "book3" "book3"
+TAG_SECURITY["1302099999"]="DA"
+checkout_book "1301111111"
+checkout_book "1302079605"
+checkout_book "1302099999"
 
-echo "  -- Checkin book1, book2, book3 --"
-checkin_book "book1" "book1"
-checkin_book "book2" "book2"
-checkin_book "book3" "book3"
+echo "  -- Checkin 1301111111, 1302079605, 1302099999 --"
+checkin_book "1301111111"
+checkin_book "1302079605"
+checkin_book "1302099999"
+TAG_SECURITY["1302099999"]="D7"
+
+scenario_start 15 "Batch checkout (Patron + 3 books simultaneously)"
+reset_rfid_state
+tab_switch "checkout"
+
+mock_clear
+load_tag "200000000042"
+TAG_SECURITY["1302099999"]="DA"
+load_tag "1301111111"
+load_tag "1302079605"
+load_tag "1302099999"
+
+# Wait for patron card scan & checkout of book 1, 2, 3
+rodney sleep 25
+check_koha_messages
+TAG_SECURITY["1302099999"]="D7" # restore
+
+# Verify all 3 books are checked out in DB and updated to D7 on mock RFID reader
+for bk in 1301111111 1302079605 1302099999; do
+    count=$(koha_mysql "SELECT COUNT(*) FROM issues JOIN items USING (itemnumber) WHERE items.barcode='$bk'")
+    if echo "$count" | grep -qE '[1-3]'; then
+        pass "Batch checkout: $bk is checked out in DB"
+    else
+        fail "Batch checkout: $bk is NOT checked out in DB"
+    fi
+    check_mock_tag_security "$bk" "D7"
+done
+
+echo "  -- Checkin 1301111111, 1302079605, 1302099999 --"
+checkin_book "1301111111"
+checkin_book "1302079605"
+checkin_book "1302099999"
 
 # ============================================================
 # PHASE 3: D7 book test (14)
 # ============================================================
 
 scenario_start 14 "Patron + 1 book D7"
-rodney open "$PAGE_URL"
-rodney waitload
-rodney sleep 2
 reset_rfid_state
 tab_switch "checkout"
 
 mock_clear
-load_tag "patron"
-rodney sleep 15
-
-if patron_loaded; then
-    info "patron info loaded in DOM by rfid_scan"
-else
-    info "patron info not in DOM, submitting search manually..."
-    rodney js "window.location.href = window.location.pathname + '?findborrower=200000000042&Submit=Submit'"
-    rodney waitload
-    rodney sleep 5
-fi
-
-tab_switch "checkout"
+load_tag "200000000042"
+rodney sleep 3
+rodney waitload
 rodney sleep 2
 
-# Book3 is D7 (on loan) — should show "not checked in"
+tab_switch "checkout"
+
+# 1302099999 is D7 (on loan) — should show "not checked in"
 mock_clear
-load_tag "book3"
-rodney sleep 10
+load_tag "1302099999"
+rodney sleep 3
 check_popup_contains "not checked in"
 
 # ============================================================

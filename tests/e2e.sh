@@ -41,42 +41,38 @@ run_page() {
         return 1
     fi
     echo ""
-    echo "═══════════════════════════════════════════════════════════════════"
+    echo "==================================================================="
     echo "  Running $page: $script $SCENARIO_FILTER"
-    echo "═══════════════════════════════════════════════════════════════════"
+    echo "==================================================================="
     bash "$script" "$SCENARIO_FILTER"
 }
 
 main() {
     ensure_mock_running
 
+    local failed=0
     if [ -n "$PAGE_FILTER" ]; then
         if [ "$PAGE_FILTER" = "" ] && [ -n "$SCENARIO_FILTER" ]; then
             for page in "${PAGE_ORDER[@]}"; do
-                run_page "$page" "$SCENARIO_FILTER"
+                run_page "$page" "$SCENARIO_FILTER" || failed=1
             done
         else
-            run_page "$PAGE_FILTER" "$SCENARIO_FILTER"
+            run_page "$PAGE_FILTER" "$SCENARIO_FILTER" || failed=1
         fi
     else
         for page in "${PAGE_ORDER[@]}"; do
-            run_page "$page" ""
+            run_page "$page" "" || failed=1
         done
     fi
 
     echo ""
-    echo "═══════════════════════════════════════════════════════════════════"
-    echo "Results: $RESULTS_FILE"
-    if [ -f "$RESULTS_FILE" ]; then
-        echo ""
-        cat "$RESULTS_FILE"
-        echo ""
-        echo "Summary:"
-        local pass fail skip
-        pass=$(grep -c "=pass" "$RESULTS_FILE" 2>/dev/null || echo 0)
-        fail=$(grep -c "=fail" "$RESULTS_FILE" 2>/dev/null || echo 0)
-        skip=$(grep -c "=skip" "$RESULTS_FILE" 2>/dev/null || echo 0)
-        echo "  pass=$pass fail=$fail skip=$skip"
+    echo "==================================================================="
+    if [ $failed -eq 0 ]; then
+        echo "  E2E Result: ALL PAGE SUITES PASSED"
+        return 0
+    else
+        echo "  E2E Result: SOME PAGE SUITES FAILED"
+        return 1
     fi
 }
 

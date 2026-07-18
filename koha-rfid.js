@@ -415,13 +415,22 @@ function rfid_scan(data) {
 
 	var body = $('#rfid-popup-body');
 	if ( body.length == 0 ) body = rfid_create_popup();
+	var now, shouldSubmit, pending;
+	var url = document.location.toString();
+	// SYNC: keep in sync with @rfid_pages in RFID.pm
+	var circulation = url.indexOf('circulation.pl') >= 0 || url.indexOf('circulation-home.pl') >= 0;
+	var circulation_home = url.indexOf('circulation-home.pl') >= 0;
 
 	// Tab detection — different Koha pages use different tab ids.
 	// On circulation-home.pl: checkout tab is #circ_search, renew tab is #renew_search.
 	var checkin_active  = $('#checkin_search').attr('aria-hidden') == 'false';
 	var checkout_active = $('#checkout_search').attr('aria-hidden') == 'false' ||
-	$('#circ_search').attr('aria-hidden') == 'false';
+	$('#circ_search').attr('aria-hidden') == 'false' ||
+	(circulation && !checkin_active && !renew_active);
 	var renew_active    = $('#renew_search').attr('aria-hidden') == 'false';
+	window.rfidDebugLogs = window.rfidDebugLogs || [];
+	window.rfidDebugLogs.push('rfid_scan: diagnosis: ' + JSON.stringify({ url: url, circ: circulation, checkout: checkout_active, checkin: checkin_active, renew: renew_active }));
+	console.log('rfid_scan: diagnosis:', { url: url, circ: circulation, checkout: checkout_active, checkin: checkin_active, renew: renew_active });
 
 	if ( data.tags && data.tags.length > 0 ) {
 		// Update last_seen for all visible tags — sweep will clear stale ones
@@ -435,10 +444,6 @@ function rfid_scan(data) {
 		if ( data.tags.length === 1 ) {
 			var t = data.tags[0];
 
-			var url = document.location.toString();
-			// SYNC: keep in sync with @rfid_pages in RFID.pm
-			var circulation = url.indexOf('circulation.pl') >= 0;      // also matches circulation-home.pl (substring)
-			var circulation_home = url.indexOf('circulation-home.pl') >= 0;
 			var returns = url.indexOf('returns.pl') >= 0;
 			var renew = url.indexOf('renew.pl') >= 0;
 
@@ -451,7 +456,6 @@ function rfid_scan(data) {
 				var sec = (t.security || '').toUpperCase();
 				var label = afi_label(sec);
 				var color = afi_color(sec);
-				body.text( t.content + ' (' + label + ')' ).css('color', color);
 
 				// -----------------------------------------------------------
 				// Step 1: resolve any pending AFI write from a previous page load
@@ -476,17 +480,19 @@ function rfid_scan(data) {
 				// Step 2: skip if AFI hasn't changed since last submission
 				// (returns page has its own time-based dedup — see Step 4)
 				// -----------------------------------------------------------
-				if ( entry && entry.sec == sec && !returns ) {
+				if ( entry && entry.sec == sec && !returns && !renew && !checkin_active && !renew_active ) {
 					rfid_timeout = window.setTimeout( rfid_poll, RFID_POLL_INTERVAL_MS );
 					return;
 				}
+
+				body.text( t.content + ' (' + label + ')' ).css('color', color);
 
 				// -----------------------------------------------------------
 				// Step 3: Renew page — #ren_barcode form, no AFI write
 				// -----------------------------------------------------------
 				if ( renew ) {
 					if ( sec == 'D7' ) {
-						var i = $('#ren_barcode');
+						var i = $('#barcode');
 						if ( i.is(':visible') && i.val() != t.content ) {
 							i.val( t.content );
 							rfid_afi_set(t.content, sec, null); // no AFI change needed
@@ -494,6 +500,7 @@ function rfid_scan(data) {
 						}
 					} else {
 						body.text( t.content + ' (not on loan — cannot renew)' ).css('color', 'blue');
+						rfid_afi_set(t.content, sec, null);
 					}
 					rfid_timeout = window.setTimeout( rfid_poll, RFID_POLL_INTERVAL_MS );
 					return;
@@ -520,20 +527,21 @@ function rfid_scan(data) {
 				// -----------------------------------------------------------
 				if ( returns ) {
 					// Time-based dedup: skip if last submit was within 10 seconds
-					var now = Date.now();
-					var shouldSubmit = !entry || !entry.submit || (now - entry.submit > RFID_DEDUP_MS);
+					now = Date.now();
+					shouldSubmit = !entry || !entry.submit || (now - entry.submit > RFID_DEDUP_MS);
 					if ( shouldSubmit ) {
 						var barcodeInput = $('#barcode');
 						if ( barcodeInput.is(':visible') && barcodeInput.val() != t.content ) {
 							barcodeInput.val( t.content );
 							// Set pending only if book was on loan (D7 → need to write DA)
-							var pending = (sec == 'D7') ? 'DA' : null;
+							pending = (sec == 'D7') ? 'DA' : null;
 							rfid_afi_set(t.content, sec, pending);
 							rfid_afi_set_submit(t.content);
 							barcodeInput.closest('form').submit();
 						}
 					} else {
 						body.text( t.content + ' (already submitted)' ).css('color', 'blue');
+						rfid_afi_set(t.content, sec, null);
 					}
 					rfid_timeout = window.setTimeout( rfid_poll, RFID_POLL_INTERVAL_MS );
 					return;
@@ -545,60 +553,55 @@ function rfid_scan(data) {
 				// circulation.pl       — #mainform with #barcode for checkout
 				// circulation-home.pl  — tabbed: checkin (#ret_barcode) or checkout (patron search)
 				// -----------------------------------------------------------
-				if ( circulation ) {
-					if ( circulation_home ) {
-						// circulation-home.pl — tabs switch visible forms
-						if ( checkin_active ) {
-							// Checkin tab → returns form (#ret_barcode), same logic as Step 4
-							now = Date.now();
-							shouldSubmit = !entry || !entry.submit || (now - entry.submit > RFID_DEDUP_MS);
-							if ( shouldSubmit ) {
-								var retInput = $('#ret_barcode');
-								if ( retInput.is(':visible') && retInput.val() != t.content ) {
-									retInput.val( t.content );
-									pending = (sec == 'D7') ? 'DA' : null;
-									rfid_afi_set(t.content, sec, pending);
-									rfid_afi_set_submit(t.content);
-									retInput.closest('form').submit();
-								}
-							} else {
-								body.text( t.content + ' (already submitted)' ).css('color', 'blue');
+				if ( circulation || circulation_home ) {
+					// Both circulation.pl and circulation-home.pl share the same search tabs
+					if ( checkin_active ) {
+						// Checkin tab → returns form (#ret_barcode), same logic as Step 4
+						now = Date.now();
+						shouldSubmit = !entry || !entry.submit || (now - entry.submit > RFID_DEDUP_MS);
+						if ( shouldSubmit ) {
+							var retInput = $('#ret_barcode');
+							if ( retInput.is(':visible') && retInput.val() != t.content ) {
+								retInput.val( t.content );
+								pending = (sec == 'D7') ? 'DA' : null;
+								rfid_afi_set(t.content, sec, pending);
+								rfid_afi_set_submit(t.content);
+								retInput.closest('form').submit();
 							}
-						} else if ( renew_active && sec == 'D7' ) {
-							// Renew tab — #ren_barcode, same logic as Step 3
-							var renInput = $('#ren_barcode');
-							if ( renInput.is(':visible') && renInput.val() != t.content ) {
-								renInput.val( t.content );
-								rfid_afi_set(t.content, sec, null);
-								renInput.closest('form').submit();
-							}
-						} else if ( checkout_active && sec == 'DA' ) {
-							// Checkout tab — use #barcode if visible (after patron selection)
-							var checkoutInput = $('#barcode');
-							if ( checkoutInput.length > 0 && checkoutInput.is(':visible') && checkoutInput.val() != t.content ) {
-								checkoutInput.val( t.content );
-								rfid_afi_set(t.content, sec, 'D7');
-								checkoutInput.closest('form').submit();
-							} else {
-								body.text( t.content + ' (' + label + ')' ).css('color', color);
-							}
+						} else {
+							body.text( t.content + ' (already submitted)' ).css('color', 'blue');
+						}
+					} else if ( renew_active && sec == 'D7' ) {
+						// Renew tab — #ren_barcode, same logic as Step 3
+						var renInput = $('#ren_barcode');
+						if ( renInput.is(':visible') && renInput.val() != t.content ) {
+							renInput.val( t.content );
+							rfid_afi_set(t.content, sec, null);
+							renInput.closest('form').submit();
+						}
+					} else if ( checkout_active && sec == 'DA' ) {
+						// Checkout tab — use #barcode if visible (after patron selection)
+						var checkoutInput = $('#barcode');
+						if ( checkoutInput.length > 0 && checkoutInput.is(':visible') && checkoutInput.val() != t.content ) {
+							checkoutInput.val( t.content );
+							rfid_afi_set(t.content, sec, 'D7');
+							checkoutInput.closest('form').submit();
 						} else {
 							body.text( t.content + ' (' + label + ')' ).css('color', color);
 						}
 					} else {
-						// circulation.pl — checkout form with #barcode
-						if ( sec == 'DA' ) {
-							var is_checkout = checkout_active || (!checkin_active && circulation);
-							if ( is_checkout ) {
-								var circInput = $('#barcode');
-								if ( circInput.length > 0 && circInput.is(':visible') && circInput.val() != t.content ) {
-									circInput.val( t.content );
-									rfid_afi_set(t.content, sec, 'D7'); // pending AFI write to D7
-									circInput.closest('form').submit();
-								}
-							}
-						} else {
+						window.rfidDebugLogs = window.rfidDebugLogs || [];
+						window.rfidDebugLogs.push('rfid_scan: Step 5 fallback. checkout_active: ' + checkout_active + ' sec: ' + sec);
+						console.log('rfid_scan: Step 5 fallback. checkout_active:', checkout_active, 'sec:', sec);
+						if ( checkout_active && sec != 'DA' ) {
+							window.rfidDebugLogs.push('rfid_scan: Step 5 warning shown');
+							console.log('rfid_scan: Step 5 warning shown');
 							body.text( t.content + ' (not checked in — cannot checkout)' ).css('color', 'blue');
+							rfid_afi_set(t.content, sec, null);
+						} else {
+							window.rfidDebugLogs.push('rfid_scan: Step 5 fallback label shown');
+							console.log('rfid_scan: Step 5 fallback label shown');
+							body.text( t.content + ' (' + label + ')' ).css('color', color);
 						}
 					}
 					rfid_timeout = window.setTimeout( rfid_poll, RFID_POLL_INTERVAL_MS );
@@ -608,7 +611,11 @@ function rfid_scan(data) {
 				// -----------------------------------------------------------
 				// Fallback: not on a known Koha page — show info
 				// -----------------------------------------------------------
+				window.rfidDebugLogs = window.rfidDebugLogs || [];
+				window.rfidDebugLogs.push('rfid_scan: Step 6 fallback shown');
+				console.log('rfid_scan: Step 6 fallback shown');
 				body.text( t.content + ' (' + label + ')' ).css('color', color);
+				rfid_afi_set(t.content, sec, null);
 
 			} else {
 				// Non-book barcode (patron card)
@@ -625,13 +632,27 @@ function rfid_scan(data) {
 
 		} else {
 			// Multiple tags — iterate and process the first unprocessed book
+			var is_checkout_tab = checkout_active || (!checkin_active && (circulation || circulation_home));
+			var is_patron_loaded = $('#circ_circulation_issue').length > 0;
+			if ( is_checkout_tab && !is_patron_loaded ) {
+				for ( var pi = 0; pi < data.tags.length; pi++ ) {
+					var tp = data.tags[pi];
+					if ( tp.content.length > 0 && tp.content.substr(0,3) != '130' ) {
+						// Process this patron card first
+						data.tags = [ tp ];
+						rfid_scan(data);
+						return;
+					}
+				}
+			}
+
 			for ( var ti = 0; ti < data.tags.length; ti++ ) {
 				var t2 = data.tags[ti];
 				if ( t2.content.length == 0 ) continue;
 				if ( t2.content.substr(0,3) == '130' ) {
 					var entry2 = rfid_afi_get(t2.content);
 					var sec2 = (t2.security || '').toUpperCase();
-					if ( !entry2 || entry2.sec != sec2 ) {
+					if ( !entry2 || entry2.sec != sec2 || entry2.pending ) {
 						// Process this single book; remaining tags will be picked up on next poll
 						data.tags = [ t2 ];
 						rfid_scan(data);
