@@ -625,11 +625,14 @@ function rfid_scan(data) {
 				rfid_afi_set(t.content, sec, null);
 
 			} else {
-				// Non-book barcode (patron card)
+				// Non-book barcode (patron card) — allow resubmission after dedup window
 				body.text( t.content ).css('color', 'blue' );
 				var patronEntry = rfid_afi_get(t.content);
-				if ( !patronEntry || patronEntry.sec != 'patron' ) {
+				now = Date.now();
+				var canResubmit = !patronEntry || (patronEntry.sec == 'patron' && now - (patronEntry.submit || 0) > RFID_DEDUP_MS) || patronEntry.sec != 'patron';
+				if ( canResubmit ) {
 					rfid_afi_set(t.content, 'patron', null);
+					rfid_afi_set_submit(t.content);
 					var pb = $('input[name=findborrower]');
 					if ( pb.is(':visible') ) {
 						var el = pb[0]; el.value = t.content; el.closest('form').submit();

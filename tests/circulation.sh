@@ -18,11 +18,13 @@ rodney connect localhost:$CDP_PORT
 koha_login
 mock_start
 suite_start "$PAGE_URL"
+check_page "circulation\.pl"
 pre_flight_check
 
 # Default form check
 echo ""
 echo "-- Default form check --"
+check_page "circulation\.pl"
 if rodney exists 'input[name=findborrower]' 2>/dev/null; then
     pass "default checkout form (findborrower) is present"
     mock_clear
@@ -89,56 +91,76 @@ checkin_book() {
 
 scenario_start 1 "No tags"
 mock_clear
+check_page "circulation\.pl"
 tab_switch "checkout"
+check_page "circulation\.pl"
 check_popup_empty
 
 scenario_start 2 "Patron only"
 mock_clear
+check_page "circulation\.pl"
 tab_switch "checkout"
+check_page "circulation\.pl"
 load_tag "200000000042"
 rodney sleep 3
 rodney waitload
+check_page "circulation\.pl"
 check_popup_contains "200000000042"
 
 scenario_start 3 "Book DA checkin"
 mock_clear
+check_page "circulation\.pl"
 tab_switch "checkin"
+check_page "circulation\.pl"
 load_tag "1301111111"
 rodney sleep 3
 rodney waitload
+check_page "circulation\.pl"
 check_popup_contains "1301111111"
 
 scenario_start 4 "Book D7 renew"
 mock_clear
+check_page "circulation\.pl"
 tab_switch "renew"
+check_page "circulation\.pl"
 load_tag "1302099999"
 rodney sleep 3
 rodney waitload
+check_page "circulation\.pl"
 check_popup_contains "1302099999"
 
 scenario_start 5 "Empty tag"
 mock_clear
+check_page "circulation\.pl"
 tab_switch "checkout"
+check_page "circulation\.pl"
 load_tag "empty"
 rodney sleep 3
+check_page "circulation\.pl"
 check_popup_empty
 
 scenario_start 7 "Timeout mode"
-rfid_pause
 mock_clear
+check_page "circulation\.pl"
+rfid_pause
 mock_timeout 100
 load_tag "1301111111"
 rfid_resume
 rodney sleep 3
+check_page "circulation\.pl"
 check_popup_contains "timeout"
 
 scenario_start 8 "Tag leaves range"
 mock_clear
+check_page "circulation\.pl"
 tab_switch "checkout"
+check_page "circulation\.pl"
 load_tag "1301111111"
 rodney sleep 3
+check_page "circulation\.pl"
 mock_clear
 rodney sleep 3
+check_page "circulation\.pl"
 check_popup_empty
 
 # ============================================================
@@ -147,57 +169,83 @@ check_popup_empty
 # ============================================================
 
 scenario_start 11 "Patron + 1 book DA"
-tab_switch "checkout"
-
 mock_clear
+check_page "circulation\.pl"
+tab_switch "checkout"
+check_page "circulation\.pl"
+
 load_tag "200000000042"
 rodney sleep 3
 rodney waitload
+check_page "circulation\.pl"
 
 tab_switch "checkout"
+check_page "circulation\.pl"
 checkout_book "1301111111"
+check_page "circulation\.pl"
 
 echo "  -- Checkin 1301111111 --"
 checkin_book "1301111111"
+check_page "circulation\.pl"
 
 scenario_start 12 "Patron + 2 books DA"
-tab_switch "checkout"
-
 mock_clear
+check_page "circulation\.pl"
+tab_switch "checkout"
+check_page "circulation\.pl"
+
 load_tag "200000000042"
 rodney sleep 3
 rodney waitload
+check_page "circulation\.pl"
 
 tab_switch "checkout"
+check_page "circulation\.pl"
 checkout_book "1301111111"
+check_page "circulation\.pl"
 checkout_book "1302079605"
+check_page "circulation\.pl"
 
 echo "  -- Checkin 1301111111 and 1302079605 --"
 checkin_book "1301111111"
+check_page "circulation\.pl"
 checkin_book "1302079605"
+check_page "circulation\.pl"
 
 scenario_start 13 "Patron + 3 books DA"
-tab_switch "checkout"
-
 mock_clear
+check_page "circulation\.pl"
+tab_switch "checkout"
+check_page "circulation\.pl"
+
 load_tag "200000000042"
 rodney sleep 3
 rodney waitload
+check_page "circulation\.pl"
 
 tab_switch "checkout"
+check_page "circulation\.pl"
 checkout_book "1301111111"
+check_page "circulation\.pl"
 checkout_book "1302079605"
+check_page "circulation\.pl"
 checkout_book "1302099999" "DA"
+check_page "circulation\.pl"
 
 echo "  -- Checkin 1301111111, 1302079605, 1302099999 --"
 checkin_book "1301111111"
+check_page "circulation\.pl"
 checkin_book "1302079605"
+check_page "circulation\.pl"
 checkin_book "1302099999"
+check_page "circulation\.pl"
 
 scenario_start 15 "Batch checkout (Patron + 3 books simultaneously)"
-tab_switch "checkout"
-
 mock_clear
+check_page "circulation\.pl"
+tab_switch "checkout"
+check_page "circulation\.pl"
+
 load_tag "200000000042"
 load_tag "1301111111"
 load_tag "1302079605"
@@ -206,6 +254,7 @@ load_tag_with_security "1302099999" "DA"
 # Wait for patron card scan & checkout of book 1, 2, 3
 rodney sleep 25
 check_koha_messages
+check_page "circulation\.pl"
 
 # Verify all 3 books are checked out in DB and updated to D7 on mock RFID reader
 for bk in 1301111111 1302079605 1302099999; do
@@ -228,9 +277,11 @@ checkin_book "1302099999"
 # ============================================================
 
 scenario_start 14 "Patron + 1 book D7"
-tab_switch "checkout"
-
 mock_clear
+check_page "circulation\.pl"
+tab_switch "checkout"
+check_page "circulation\.pl"
+
 load_tag "200000000042"
 rodney sleep 3
 rodney waitload

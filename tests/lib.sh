@@ -167,6 +167,14 @@ koha_login() {
 tab_switch() {
     local tab="$1"
     [ -z "$tab" ] && return 0
+    # Ensure we're on circulation.pl before switching tabs (Koha may have
+    # navigated to returns.pl after a prior checkin action).
+    local url
+    url=$(rodney url 2>/dev/null || echo "")
+    if ! echo "$url" | grep -q "circulation\.pl"; then
+        rodney open "$KOHA_URL/circ/circulation.pl"
+        rodney waitload
+    fi
     rodney wait '#circ_search' >/dev/null 2>&1 || true
     case "$tab" in
         checkout) rodney js 'document.querySelector("a[href$=\"#circ_search\"]")?.click()' >/dev/null 2>&1 || true;;
@@ -367,6 +375,27 @@ check_koha_messages() {
     })()" 2>/dev/null || echo "")
     if [ -n "$msgs" ]; then
         info "Koha page message(s): $msgs"
+    fi
+}
+
+# ------------------------------------------------------------------
+# Page tracking — displays current URL and verifies expected page
+# ------------------------------------------------------------------
+check_page() {
+    local expected_pattern="${1:-}"
+    local url
+    url=$(rodney url 2>/dev/null || echo "unknown")
+    local title
+    title=$(rodney title 2>/dev/null || echo "unknown")
+    local short_url="${url#*$KOHA_URL}"
+    short_url="${short_url#?}" # remove leading /
+    echo "  PAGE: $title ($short_url)"
+    if [ -n "$expected_pattern" ] && [ "$url" != "unknown" ]; then
+        if echo "$url" | grep -q "$expected_pattern"; then
+            : # ok
+        else
+            echo "  [MISMATCH] expected pattern '$expected_pattern' but on '$url'"
+        fi
     fi
 }
 
