@@ -1,6 +1,6 @@
 #!/bin/bash
 # tests/circulation.sh — Full Linear Test Suite for Circulation
-# Single init/teardown, resets RFID state before each scenario.
+# Single init/teardown; scenarios intentionally retain RFID/browser state.
 
 set -eu
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -17,9 +17,7 @@ echo "[========================================]"
 rodney connect localhost:$CDP_PORT
 koha_login
 mock_start
-rodney open "$PAGE_URL"
-rodney waitload
-reset_rfid_state
+suite_start "$PAGE_URL"
 pre_flight_check
 
 # Default form check
@@ -47,9 +45,13 @@ patron_loaded() {
 
 # --- Helper: checkout a book (load tag, wait, verify) ---
 checkout_book() {
-    local barcode="$1"
+    local barcode="$1" security="${2:-}"
     mock_clear
-    load_tag "$barcode"
+    if [ -n "$security" ]; then
+        load_tag_with_security "$barcode" "$security"
+    else
+        load_tag "$barcode"
+    fi
     rodney sleep 2
     rodney waitload
     check_koha_messages
@@ -87,13 +89,11 @@ checkin_book() {
 
 scenario_start 1 "No tags"
 mock_clear
-reset_rfid_state
 tab_switch "checkout"
 check_popup_empty
 
 scenario_start 2 "Patron only"
 mock_clear
-reset_rfid_state
 tab_switch "checkout"
 load_tag "200000000042"
 rodney sleep 3
@@ -102,7 +102,6 @@ check_popup_contains "200000000042"
 
 scenario_start 3 "Book DA checkin"
 mock_clear
-reset_rfid_state
 tab_switch "checkin"
 load_tag "1301111111"
 rodney sleep 3
@@ -111,7 +110,6 @@ check_popup_contains "1301111111"
 
 scenario_start 4 "Book D7 renew"
 mock_clear
-reset_rfid_state
 tab_switch "renew"
 load_tag "1302099999"
 rodney sleep 3
@@ -120,7 +118,6 @@ check_popup_contains "1302099999"
 
 scenario_start 5 "Empty tag"
 mock_clear
-reset_rfid_state
 tab_switch "checkout"
 load_tag "empty"
 rodney sleep 3
@@ -129,7 +126,6 @@ check_popup_empty
 scenario_start 7 "Timeout mode"
 rfid_pause
 mock_clear
-reset_rfid_state
 mock_timeout 100
 load_tag "1301111111"
 rfid_resume
@@ -138,7 +134,6 @@ check_popup_contains "timeout"
 
 scenario_start 8 "Tag leaves range"
 mock_clear
-reset_rfid_state
 tab_switch "checkout"
 load_tag "1301111111"
 rodney sleep 3
@@ -152,7 +147,6 @@ check_popup_empty
 # ============================================================
 
 scenario_start 11 "Patron + 1 book DA"
-reset_rfid_state
 tab_switch "checkout"
 
 mock_clear
@@ -167,7 +161,6 @@ echo "  -- Checkin 1301111111 --"
 checkin_book "1301111111"
 
 scenario_start 12 "Patron + 2 books DA"
-reset_rfid_state
 tab_switch "checkout"
 
 mock_clear
@@ -184,7 +177,6 @@ checkin_book "1301111111"
 checkin_book "1302079605"
 
 scenario_start 13 "Patron + 3 books DA"
-reset_rfid_state
 tab_switch "checkout"
 
 mock_clear
@@ -193,32 +185,27 @@ rodney sleep 3
 rodney waitload
 
 tab_switch "checkout"
-TAG_SECURITY["1302099999"]="DA"
 checkout_book "1301111111"
 checkout_book "1302079605"
-checkout_book "1302099999"
+checkout_book "1302099999" "DA"
 
 echo "  -- Checkin 1301111111, 1302079605, 1302099999 --"
 checkin_book "1301111111"
 checkin_book "1302079605"
 checkin_book "1302099999"
-TAG_SECURITY["1302099999"]="D7"
 
 scenario_start 15 "Batch checkout (Patron + 3 books simultaneously)"
-reset_rfid_state
 tab_switch "checkout"
 
 mock_clear
 load_tag "200000000042"
-TAG_SECURITY["1302099999"]="DA"
 load_tag "1301111111"
 load_tag "1302079605"
-load_tag "1302099999"
+load_tag_with_security "1302099999" "DA"
 
 # Wait for patron card scan & checkout of book 1, 2, 3
 rodney sleep 25
 check_koha_messages
-TAG_SECURITY["1302099999"]="D7" # restore
 
 # Verify all 3 books are checked out in DB and updated to D7 on mock RFID reader
 for bk in 1301111111 1302079605 1302099999; do
@@ -241,7 +228,6 @@ checkin_book "1302099999"
 # ============================================================
 
 scenario_start 14 "Patron + 1 book D7"
-reset_rfid_state
 tab_switch "checkout"
 
 mock_clear

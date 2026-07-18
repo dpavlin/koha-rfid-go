@@ -104,27 +104,17 @@ check_rfid_server() {
 }
 
 # ------------------------------------------------------------------
-# Mock server — if already running, just clear tags.
+# Mock server lifecycle. State is reset by suite_start, once per page suite.
 # If nothing is running, start mock. If real reader is running, stop it first.
 # ------------------------------------------------------------------
 mock_start() {
     # Check if mock server is already running
     if curl -sk "$MOCK_URL/mock/status" >/dev/null 2>&1; then
-        mock_clear
-        mock_error 0
-        mock_timeout 0
         return 0
     fi
     # Nothing running — start mock
     check_rfid_server
     ./server.sh start --mock || return 1
-}
-
-mock_reset() {
-    # Reset mock server to clean state (clear tags, errors, timeouts)
-    mock_clear
-    mock_error 0
-    mock_timeout 0
 }
 
 mock_stop() { :; }
@@ -218,6 +208,19 @@ load_tag() {
     mock_add "$sid" "$barcode" "$security"
 }
 
+# Place a known tag with an explicit AFI when a scenario models a transition.
+# This does not alter the fixture default used by later scenarios.
+load_tag_with_security() {
+    local barcode="$1" security="$2"
+    local sid
+    sid="${TAG_SID[$barcode]:-}"
+    if [ -z "$sid" ]; then
+        echo "  [error] no SID fixture for $barcode"
+        return 1
+    fi
+    mock_add "$sid" "$barcode" "$security"
+}
+
 check_popup_contains() {
     local search="$1"
     local text=""
@@ -276,11 +279,26 @@ check_mock_tag_security() {
 }
 
 # ------------------------------------------------------------------
-# RFID state management — single point of control, no direct localStorage calls in tests
+# RFID state management. Reset only at a suite boundary; scenarios must model
+# physical tag placement/removal and retain browser state from prior actions.
 # ------------------------------------------------------------------
 reset_rfid_state() {
     mock_reset
     rodney js "(function() { localStorage.removeItem('rfid_afi'); window.rfid_popup_update(); var b=document.getElementById('rfid-popup-body'); if(b) b.textContent='(no tags)'; })()" >/dev/null 2>&1
+}
+
+suite_start() {
+    local url="$1"
+    reset_rfid_state
+    rodney open "$url"
+    rodney waitload
+    rodney sleep 1
+}
+
+visit_page() {
+    rodney open "$1"
+    rodney waitload
+    rodney sleep 1
 }
 
 # ------------------------------------------------------------------
@@ -290,18 +308,9 @@ scenario_start() {
     local sid="$1" name="$2"
     echo ""
     echo "  --- Scenario $sid: $name ---"
-    reset_rfid_state
-    if [ -n "${PAGE_URL:-}" ]; then
-        local cb_url="$PAGE_URL"
-        if [[ "$cb_url" == *\?* ]]; then
-            cb_url="${cb_url}&cb=$(date +%s%N)"
-        else
-            cb_url="${cb_url}?cb=$(date +%s%N)"
-        fi
-        rodney open "$cb_url"
-        rodney waitload
-        rodney sleep 1
-    fi
+    # Do not reset RFID/browser state or navigate here. A scenario continues
+    # from the previous librarian action. Tests that genuinely need another
+    # page must call visit_page explicitly.
 }
 
 scenario_end() {

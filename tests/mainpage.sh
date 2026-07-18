@@ -17,8 +17,7 @@ echo "[========================================]"
 rodney connect localhost:$CDP_PORT
 koha_login
 mock_start
-rodney open "$PAGE_URL"
-rodney waitload
+suite_start "$PAGE_URL"
 
 # --- Scenario 1: No tags ---
 scenario_start 1 "No tags"
@@ -55,7 +54,6 @@ check_popup_contains "timeout"
 # --- Scenario 8: Tag leaves range ---
 scenario_start 8 "Tag leaves range"
 mock_clear
-reset_rfid_state
 load_tag "1301111111"
 rodney sleep 3
 mock_clear

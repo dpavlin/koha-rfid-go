@@ -18,8 +18,7 @@ rodney connect localhost:$CDP_PORT
 koha_login
 cleanup_issues
 mock_start
-rodney open "$PAGE_URL"
-rodney waitload
+suite_start "$PAGE_URL"
 
 # --- Scenario 1: No tags ---
 scenario_start 1 "No tags"
@@ -63,7 +62,6 @@ check_popup_contains "timeout"
 # --- Scenario 8: Tag leaves range ---
 scenario_start 8 "Tag leaves range"
 mock_clear
-reset_rfid_state
 load_tag "1301111111"
 rodney sleep 3
 mock_clear
@@ -87,43 +85,50 @@ load_tag "1302099999"
 rodney sleep 5
 check_popup_contains "1302099999"
 
-# --- Scenario 15: Return 1 book DA ---
+# --- Scenario 15: Return 1 issued book (D7 → DA) ---
 db_checkout "200000000042" "1301111111"
 
-scenario_start 15 "Return 1 book DA"
+scenario_start 15 "Return 1 issued book (D7 → DA)"
 mock_clear
-load_tag "1301111111"
+load_tag_with_security "1301111111" "D7"
 check_db "SELECT COUNT(*) FROM issues JOIN items USING (itemnumber) WHERE items.barcode='1301111111'" "0"
+check_mock_tag_security "1301111111" "DA"
 
-# --- Scenario 16: Return 2 books DA ---
+# --- Scenario 16: Return 2 issued books (D7 → DA) ---
 db_checkout "200000000042" "1301111111"
 db_checkout "200000000042" "1302079605"
 
-scenario_start 16 "Return 2 books DA"
+scenario_start 16 "Return 2 issued books (D7 → DA)"
 mock_clear
-load_tag "1301111111"
-load_tag "1302079605"
+load_tag_with_security "1301111111" "D7"
+load_tag_with_security "1302079605" "D7"
 check_db "SELECT COUNT(*) FROM issues JOIN items USING (itemnumber) WHERE items.barcode IN ('1301111111', '1302079605')" "0"
+check_mock_tag_security "1301111111" "DA"
+check_mock_tag_security "1302079605" "DA"
 
-# --- Scenario 17: Return 3 books DA ---
+# --- Scenario 17: Return 3 issued books (D7 → DA) ---
 db_checkout "200000000042" "1301111111"
 db_checkout "200000000042" "1302079605"
 db_checkout "200000000042" "1302099999"
 
-scenario_start 17 "Return 3 books DA"
+scenario_start 17 "Return 3 issued books (D7 → DA)"
 mock_clear
-load_tag "1301111111"
-load_tag "1302079605"
-load_tag "1302099999"
+load_tag_with_security "1301111111" "D7"
+load_tag_with_security "1302079605" "D7"
+load_tag_with_security "1302099999" "D7"
 check_db "SELECT COUNT(*) FROM issues JOIN items USING (itemnumber) WHERE items.barcode IN ('1301111111', '1302079605', '1302099999')" "0"
+check_mock_tag_security "1301111111" "DA"
+check_mock_tag_security "1302079605" "DA"
+check_mock_tag_security "1302099999" "DA"
 
 # --- Scenario 18: Return D7 book ---
 db_checkout "200000000042" "1302099999"
 
 scenario_start 18 "Return D7 book"
 mock_clear
-load_tag "1302099999"
+load_tag_with_security "1302099999" "D7"
 check_db "SELECT COUNT(*) FROM issues JOIN items USING (itemnumber) WHERE items.barcode='1302099999'" "0"
+check_mock_tag_security "1302099999" "DA"
 
 cleanup_issues
 

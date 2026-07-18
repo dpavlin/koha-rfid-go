@@ -17,8 +17,7 @@ echo "[========================================]"
 rodney connect localhost:$CDP_PORT
 koha_login
 mock_start
-rodney open "$PAGE_URL"
-rodney waitload
+suite_start "$PAGE_URL"
 
 # --- Scenario 1: No tags ---
 scenario_start 1 "No tags"
@@ -28,7 +27,6 @@ check_popup_empty
 # --- Scenario 2: Patron only ---
 scenario_start 2 "Patron only"
 mock_clear
-reset_rfid_state
 tab_switch "checkout"
 load_tag "200000000042"
 rodney sleep 2
@@ -37,8 +35,8 @@ rodney url | grep -q "circulation.pl" && pass "Navigated to circulation.pl" || f
 
 # --- Scenario 3: Book DA checkin ---
 scenario_start 3 "Book DA checkin"
+visit_page "$PAGE_URL"
 mock_clear
-reset_rfid_state
 tab_switch "checkin"
 load_tag "1301111111"
 rodney sleep 2
@@ -47,8 +45,8 @@ check_popup_contains "1301111111"
 
 # --- Scenario 4: Book D7 renew ---
 scenario_start 4 "Book D7 renew"
+visit_page "$PAGE_URL"
 mock_clear
-reset_rfid_state
 tab_switch "renew"
 load_tag "1302099999"
 rodney sleep 2
@@ -76,7 +74,6 @@ check_popup_contains "timeout"
 # --- Scenario 8: Tag leaves range ---
 scenario_start 8 "Tag leaves range"
 mock_clear
-reset_rfid_state
 tab_switch "checkout"
 load_tag "1301111111"
 rodney sleep 3
@@ -86,8 +83,8 @@ check_popup_empty
 
 # --- Scenario 21: Patron on circ-home ---
 scenario_start 21 "Patron on circ-home"
+visit_page "$PAGE_URL"
 mock_clear
-reset_rfid_state
 tab_switch "checkout"
 load_tag "200000000042"
 rodney sleep 2
@@ -97,8 +94,8 @@ rodney url | grep -q "circulation.pl" && pass "Navigated to circulation.pl" || f
 
 # --- Scenario 22: Book checkin on circ-home ---
 scenario_start 22 "Book checkin on circ-home"
+visit_page "$PAGE_URL"
 mock_clear
-reset_rfid_state
 tab_switch "checkin"
 load_tag "1301111111"
 rodney sleep 2
@@ -112,8 +109,8 @@ fi
 
 # --- Scenario 23: Book renew on circ-home ---
 scenario_start 23 "Book renew on circ-home"
+visit_page "$PAGE_URL"
 mock_clear
-reset_rfid_state
 tab_switch "renew"
 load_tag "1302099999"
 rodney sleep 2
