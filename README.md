@@ -314,6 +314,49 @@ koha-rfid.exe -port COM3 -listen localhost:9000
 pause
 ```
 
+## Building and Deploying
+
+A `Makefile` orchestrates the full workflow:
+
+```bash
+# Build Go binaries for Linux and Windows
+make build
+
+# Build for one platform only
+make build-linux
+make build-windows
+
+# Deploy koha-rfid.js to Koha server (SCP + restart plack)
+make deploy-js
+
+# Deploy RFID.pm plugin module to Koha server
+make deploy-plugin
+
+# Deploy both JS and plugin
+make deploy
+
+# Build KPZ plugin package (upload to Koha: Plugins → Upload plugin)
+make kpz
+
+# Clean build artifacts
+make clean
+```
+
+Set version for ldflags:
+```bash
+VERSION=1.0.0 make build
+```
+
+Under the hood `make build` calls [`build.sh`](build.sh) which cross-compiles Go binaries to `build/linux/` and `build/windows/`. Deploy targets call [`deploy.sh`](deploy.sh) and [`deploy-plugin.sh`](deploy-plugin.sh) which SCP files to `koha-dev.rot13.org` and restart plack.
+
+### Quick deploy workflow after editing
+
+```bash
+make build          # compile server + CLI tools
+make deploy         # push JS + plugin to Koha server
+./server.sh start   # start RFID server
+```
+
 ## Koha JavaScript Integration
 
 The [`koha-rfid.js`](plugin/Koha/Plugin/Rot13/RFID/koha-rfid.js) is injected by the Koha plugin on RFID-relevant pages (circulation, returns, renew, mainpage).
