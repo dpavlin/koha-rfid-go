@@ -59,7 +59,6 @@ for os in "${TARGETS[@]}"; do
 
         echo "  $os/$GOARCH: $cmd → $output"
         GOOS="$GOOS" GOARCH="$GOARCH" go build \
-            -ldflags "-X main.version=$VERSION" \
             -o "$output" \
             "./$cmd"
     done
@@ -68,7 +67,6 @@ for os in "${TARGETS[@]}"; do
     output="$OUTDIR/${PROJECT}${EXT}"
     echo "  $os/$GOARCH: . → $output"
     GOOS="$GOOS" GOARCH="$GOARCH" go build \
-        -ldflags "-X main.version=$VERSION" \
         -o "$output" \
         "."
 done
