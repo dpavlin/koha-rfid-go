@@ -21,7 +21,7 @@ DEPLOY_PLUGIN_SH := ./deploy-plugin.sh
 
 .PHONY: all build build-linux build-windows deploy deploy-js deploy-plugin kpz clean help
 
-all: build
+all: help
 
 # ─── Build Go binaries ──────────────────────────────────
 
