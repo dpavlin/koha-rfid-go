@@ -3,9 +3,9 @@
  *
  * Written by Dobrica Pavlinusic <dpavlin@rot13.org> under GPL v2 or later
  *
- * This provides example how to implement JSONP interface from
+ * This provides example how to implement the HTTP API from
  *
- * scripts/RFID-JSONP-server.pl
+ * koha-rfid-go (Go server)
  *
  * to provide overlay for tags in range and emulate form fill for Koha Library System
  * which allows check-in and checkout-operations without touching html interface
